@@ -1,0 +1,53 @@
+# {{ ansible_managed }}
+
+[Unit]
+Description=RustFS Object Storage Server
+Documentation=https://rustfs.com/docs/
+After=network-online.target
+Wants=network-online.target
+AssertFileIsExecutable={{ rustfs_bin_path }}
+
+[Service]
+Type=notify
+NotifyAccess=main
+User={{ rustfs_user }}
+Group={{ rustfs_group }}
+
+WorkingDirectory=/usr/local
+EnvironmentFile=-{{ rustfs_envfile }}
+ExecStartPre=/bin/bash -c "if [ -z \"${RUSTFS_VOLUMES}\" ]; then echo \"Variable RUSTFS_VOLUMES not set in {{ rustfs_envfile }}\"; exit 1; fi"
+ExecStart={{ rustfs_bin_path }} $RUSTFS_VOLUMES
+
+# Resource limits
+LimitNOFILE={{ rustfs_limit_nofile }}
+LimitNPROC={{ rustfs_limit_nproc }}
+TasksMax=infinity
+
+# Restart policy
+Restart=always
+RestartSec={{ rustfs_restart_sec }}
+
+OOMScoreAdjust=-1000
+SendSIGKILL=no
+
+TimeoutStartSec=30s
+TimeoutStopSec=30s
+
+# Hardening
+NoNewPrivileges=true
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectClock=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+
+# Logs
+StandardOutput=append:{{ rustfs_log_dir }}/rustfs.log
+StandardError=append:{{ rustfs_log_dir }}/rustfs-err.log
+
+[Install]
+WantedBy=multi-user.target

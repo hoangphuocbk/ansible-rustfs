@@ -1,0 +1,124 @@
+---
+# defaults file for rustfs
+#
+# RustFS - high performance, S3 compatible, distributed object storage.
+# Reference:
+#   https://docs.rustfs.com/installation/linux/multiple-node-multiple-disk.html
+#   https://docs.rustfs.com/upgrade-scale/availability-and-resiliency.html
+
+# ----------------------------------------------------------------------------
+# Installation / binary staging
+# ----------------------------------------------------------------------------
+# RustFS is shipped as a single static (musl) binary inside a zip archive.
+rustfs_version: "1.0.0-beta.8"
+rustfs_download_url: "https://github.com/rustfs/rustfs/releases/download/{{ rustfs_version }}/rustfs-linux-x86_64-musl-v{{ rustfs_version }}.zip"
+
+# Local (control node) staging directory.
+#   - online deploy : the archive is downloaded here and unpacked.
+#   - air-gapped    : pre-stage the already-extracted `rustfs` binary here
+#                     (so {{ rustfs_download_local_dir }}/rustfs exists) and
+#                     set `enable_download_binary: false`.
+rustfs_download_local_dir: /tmp
+
+# When true the binary is fetched from the internet on the control node.
+# Set to false for air-gapped environments (binary must be pre-staged).
+enable_download_binary: true
+
+# Where the binary is installed on the target hosts.
+rustfs_bin_path: /usr/local/bin/rustfs
+
+# ----------------------------------------------------------------------------
+# Service identity
+# ----------------------------------------------------------------------------
+# RustFS official docs run the service as root. Set to a dedicated, unprivileged
+# user (e.g. "rustfs") to harden the deployment - the role will create it and
+# chown the data / log directories accordingly.
+rustfs_user: rustfs
+rustfs_group: "{{ rustfs_user }}"
+
+rustfs_service_name: rustfs
+
+# ----------------------------------------------------------------------------
+# Listening addresses
+# ----------------------------------------------------------------------------
+# S3 API listen address (host:port, host may be empty to bind all interfaces).
+rustfs_address: ":9000"
+rustfs_api_port: 9000
+
+# Built-in web console.
+rustfs_console_enable: true
+rustfs_console_address: ":9001"
+rustfs_console_port: 9001
+
+# ----------------------------------------------------------------------------
+# Credentials (CHANGE THESE - keep them identical across every node)
+# ----------------------------------------------------------------------------
+rustfs_access_key: rustfsadmin
+rustfs_secret_key: rustfsadmin
+
+# ----------------------------------------------------------------------------
+# Volumes / topology
+# ----------------------------------------------------------------------------
+# RustFS uses {x...y} expansion notation. For a multi-node multi-disk cluster
+# the value MUST be identical on every node and resolve to all peers, e.g.
+# 4 nodes x 4 disks:
+#   - "http://node{1...4}:9000/data/rustfs{0...3}"
+# This list is space-joined into RUSTFS_VOLUMES.
+rustfs_volumes:
+  - "http://node{1...4}:{{ rustfs_api_port }}/data/rustfs{0...3}"
+
+# Data directories to create on each node (must match the volume notation
+# above). These are expected to be separate XFS-formatted disks mounted in
+# JBOD mode - the role only creates the directories, it does not format disks.
+rustfs_make_datadirs: true
+rustfs_datadirs:
+  - /data/rustfs0
+  - /data/rustfs1
+  - /data/rustfs2
+  - /data/rustfs3
+
+# ----------------------------------------------------------------------------
+# Logging
+# ----------------------------------------------------------------------------
+rustfs_log_dir: /var/logs/rustfs
+rustfs_log_level: error          # maps to RUST_LOG
+
+# Free-form text appended verbatim to the environment file for any extra
+# RUSTFS_* variables not modelled above.
+rustfs_env_extra: ""
+rustfs_envfile: /etc/default/rustfs
+
+# ----------------------------------------------------------------------------
+# systemd resource limits
+# ----------------------------------------------------------------------------
+rustfs_limit_nofile: 1048576
+rustfs_limit_nproc: 32768
+rustfs_restart_sec: 10s
+
+# ----------------------------------------------------------------------------
+# OS kernel tuning
+# ----------------------------------------------------------------------------
+rustfs_tune_kernel: true
+# Persisted to {{ rustfs_sysctl_file }} via ansible.posix.sysctl.
+rustfs_sysctl_file: /etc/sysctl.d/90-rustfs.conf
+rustfs_sysctl_settings:
+  net.core.rmem_max: 16777216
+  net.core.wmem_max: 16777216
+  net.ipv4.tcp_keepalive_time: 600
+  net.ipv4.tcp_slow_start_after_idle: 0
+  vm.swappiness: 10
+  net.core.somaxconn: 32768
+
+# Enable io_uring. Ubuntu 24.04 ships kernel.io_uring_disabled=2 (disabled for
+# everyone) by default; setting it to 0 lets RustFS use io_uring for higher I/O
+# throughput.
+rustfs_enable_io_uring: true
+
+# ----------------------------------------------------------------------------
+# Firewall (optional)
+# ----------------------------------------------------------------------------
+# Off by default - Ubuntu typically uses ufw/nftables. When enabled the role
+# opens the API and console ports to the other members of `rustfs_cluster`.
+rustfs_configure_iptables: false
+rustfs_cluster: rustfs-cluster
+rustfs_bind_interface: eth0

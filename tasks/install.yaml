@@ -1,0 +1,81 @@
+---
+# Install the RustFS binary and prepare the filesystem layout
+
+# --- service user / group (skipped when running as root) ------------------
+- name: install | add rustfs group
+  become: true
+  group:
+    name: "{{ rustfs_group }}"
+    state: present
+  when: rustfs_user != 'root'
+
+- name: install | add rustfs user
+  become: true
+  user:
+    name: "{{ rustfs_user }}"
+    group: "{{ rustfs_group }}"
+    state: present
+    shell: /bin/false
+    system: true
+    create_home: false
+    home: /
+  when: rustfs_user != 'root'
+
+# --- binary staging -------------------------------------------------------
+# Online: download the zip on the control node and extract the binary there.
+# Air-gapped: skip the two tasks below (enable_download_binary=false) and make
+# sure {{ rustfs_download_local_dir }}/rustfs is pre-staged on the control node.
+- name: install | download rustfs archive to control node
+  become: false
+  get_url:
+    url: "{{ rustfs_download_url }}"
+    dest: "{{ rustfs_download_local_dir }}/rustfs-{{ rustfs_version }}.zip"
+    validate_certs: false
+  register: _download_binary
+  until: _download_binary is succeeded
+  retries: 5
+  delay: 2
+  delegate_to: localhost
+  run_once: true
+  when: enable_download_binary
+
+- name: install | extract rustfs binary on control node
+  become: false
+  unarchive:
+    src: "{{ rustfs_download_local_dir }}/rustfs-{{ rustfs_version }}.zip"
+    dest: "{{ rustfs_download_local_dir }}"
+    remote_src: true
+  delegate_to: localhost
+  run_once: true
+  when: enable_download_binary
+
+- name: install | copy rustfs binary to target host
+  become: true
+  copy:
+    src: "{{ rustfs_download_local_dir }}/rustfs"
+    dest: "{{ rustfs_bin_path }}"
+    owner: root
+    group: root
+    mode: 0755
+  notify: restart rustfs service
+
+# --- directory layout -----------------------------------------------------
+- name: install | create rustfs log directory
+  become: true
+  file:
+    path: "{{ rustfs_log_dir }}"
+    state: directory
+    owner: "{{ rustfs_user }}"
+    group: "{{ rustfs_group }}"
+    mode: 0750
+
+- name: install | create rustfs data directories
+  become: true
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ rustfs_user }}"
+    group: "{{ rustfs_group }}"
+    mode: 0750
+  loop: "{{ rustfs_datadirs }}"
+  when: rustfs_make_datadirs

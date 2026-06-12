@@ -1,0 +1,67 @@
+---
+# Configure the RustFS environment file, firewall and systemd service
+
+# --- firewall (optional) --------------------------------------------------
+- name: configure | open RustFS ports to cluster peers - INPUT
+  become: true
+  iptables:
+    action: insert
+    chain: "{{ iptable_input | default('INPUT') }}"
+    source: "{{ hostvars[item]['ansible_' + rustfs_bind_interface]['ipv4']['address'] }}"
+    protocol: tcp
+    destination_ports:
+      - "{{ rustfs_api_port }}"
+      - "{{ rustfs_console_port }}"
+    comment: "ansible | RustFS cluster iptables INPUT rules"
+    jump: ACCEPT
+  loop: "{{ groups[rustfs_cluster] }}"
+  when:
+    - rustfs_configure_iptables
+    - hostvars[item]['ansible_' + rustfs_bind_interface]['ipv4']['address'] != ansible_default_ipv4.address
+
+- name: configure | open RustFS ports to cluster peers - OUTPUT
+  become: true
+  iptables:
+    action: insert
+    chain: "{{ iptable_output | default('OUTPUT') }}"
+    destination: "{{ hostvars[item]['ansible_' + rustfs_bind_interface]['ipv4']['address'] }}"
+    protocol: tcp
+    destination_ports:
+      - "{{ rustfs_api_port }}"
+      - "{{ rustfs_console_port }}"
+    comment: "ansible | RustFS cluster iptables OUTPUT rules"
+    jump: ACCEPT
+  loop: "{{ groups[rustfs_cluster] }}"
+  when:
+    - rustfs_configure_iptables
+    - hostvars[item]['ansible_' + rustfs_bind_interface]['ipv4']['address'] != ansible_default_ipv4.address
+
+# --- environment file -----------------------------------------------------
+- name: configure | generate the RustFS environment file
+  become: true
+  template:
+    src: rustfs.env.j2
+    dest: "{{ rustfs_envfile }}"
+    owner: "{{ rustfs_user }}"
+    group: "{{ rustfs_group }}"
+    mode: 0640
+  notify: restart rustfs service
+
+# --- systemd service ------------------------------------------------------
+- name: configure | install rustfs systemd unit
+  become: true
+  template:
+    src: rustfs.service.j2
+    dest: "/etc/systemd/system/{{ rustfs_service_name }}.service"
+    owner: root
+    group: root
+    mode: 0644
+  notify: restart rustfs service
+
+- name: configure | enable and start rustfs service
+  become: true
+  systemd:
+    name: "{{ rustfs_service_name }}"
+    daemon_reload: true
+    enabled: true
+    state: started

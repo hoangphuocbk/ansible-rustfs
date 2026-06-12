@@ -1,0 +1,9 @@
+---
+# tasks file for rustfs
+
+- import_tasks: kernel-tuning.yaml
+  when: rustfs_tune_kernel
+
+- import_tasks: install.yaml
+
+- import_tasks: configure.yaml

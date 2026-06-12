@@ -1,0 +1,66 @@
+---
+
+# Multi-node multi-disk RustFS deployment (4 nodes x 4 disks).
+#
+# RustFS requires every node to (re)start at the same time, so the play runs
+# against all hosts at once (no `serial`) - handlers fire across the whole
+# cluster in the same run. Re-run with `--limit` only for additive scaling.
+
+- hosts: rustfs-cluster
+  remote_user: vagrant
+  tasks:
+    - name: Include rustfs role
+      include_role:
+        name: ../../../storage/rustfs
+  vars:
+    # ---- binary -----------------------------------------------------------
+    rustfs_version: 1.0.0-beta.8
+    rustfs_download_url: "https://github.com/rustfs/rustfs/releases/download/{{ rustfs_version }}/rustfs-linux-x86_64-gnu-v{{ rustfs_version }}.zip"
+    rustfs_download_local_dir: /tmp
+    # Online deploy. For air-gapped: set this to false and pre-stage the
+    # extracted binary at /tmp/rustfs on the control node.
+    enable_download_binary: true
+    rustfs_bin_path: /usr/local/bin/rustfs
+
+    # ---- identity ---------------------------------------------------------
+    rustfs_user: rustfs-user
+    rustfs_group: rustfs-user
+
+    # ---- listeners --------------------------------------------------------
+    rustfs_address: ":9000"
+    rustfs_api_port: 9000
+    rustfs_console_enable: true
+    rustfs_console_address: ":9001"
+    rustfs_console_port: 9001
+
+    # ---- credentials (CHANGE ME) -----------------------------------------
+    rustfs_access_key: "rustfsadmin"
+    rustfs_secret_key: "ChangeMe-Str0ng-Secret"
+
+    # ---- topology: 3 nodes x 4 disks -------------------------------------
+    rustfs_volumes:
+      - "http://node{1...3}:9000/data/rustfs{0...3}"
+    rustfs_make_datadirs: true
+    rustfs_datadirs:
+      - /data/rustfs0
+      - /data/rustfs1
+      - /data/rustfs2
+      - /data/rustfs3
+
+    # ---- logging ----------------------------------------------------------
+    rustfs_log_dir: /var/logs/rustfs
+    rustfs_log_level: error
+
+    # ---- kernel tuning + io_uring ----------------------------------------
+    rustfs_tune_kernel: true
+    rustfs_enable_io_uring: true
+
+    # ---- firewall (Ubuntu uses ufw by default; off here) -----------------
+    rustfs_configure_iptables: false
+    rustfs_cluster: rustfs-cluster
+    rustfs_bind_interface: eth1
+
+    # extra RUSTFS_* variables
+    rustfs_env_extra:
+      - RUSTFS_UNSAFE_BYPASS_DISK_CHECK=true
+      # - RUSTFS_COMPRESSION_ENABLED=true

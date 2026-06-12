@@ -1,0 +1,10 @@
+---
+# handlers file for rustfs
+
+- name: restart rustfs service
+  become: true
+  systemd:
+    name: "{{ rustfs_service_name }}"
+    daemon_reload: true
+    enabled: true
+    state: restarted
