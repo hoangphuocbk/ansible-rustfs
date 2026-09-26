@@ -3,14 +3,15 @@
 #
 # RustFS - high performance, S3 compatible, distributed object storage.
 # Reference:
-#   https://docs.rustfs.com/installation/linux/multiple-node-multiple-disk.html
-#   https://docs.rustfs.com/upgrade-scale/availability-and-resiliency.html
+#   https://docs.rustfs.com/en/installation/linux/prerequisites-and-service
+#   https://docs.rustfs.com/en/installation/requirement/disk-preparation
+#   https://docs.rustfs.com/en/installation/requirement/checklists/software-checklists
 
 # ----------------------------------------------------------------------------
 # Installation / binary staging
 # ----------------------------------------------------------------------------
 # RustFS is shipped as a single static (musl) binary inside a zip archive.
-rustfs_version: "1.0.0-beta.8"
+rustfs_version: "1.0.0"
 rustfs_download_url: "https://github.com/rustfs/rustfs/releases/download/{{ rustfs_version }}/rustfs-linux-x86_64-musl-v{{ rustfs_version }}.zip"
 
 # Local (control node) staging directory.
@@ -26,6 +27,17 @@ enable_download_binary: true
 
 # Where the binary is installed on the target hosts.
 rustfs_bin_path: /usr/local/bin/rustfs
+
+# Standard tools required by the software checklist.
+#   `libc6` is the Debian/Ubuntu package that provides glibc; on RHEL-family
+#   distributions override this with `glibc`. See:
+#   https://docs.rustfs.com/en/installation/requirement/checklists/software-checklists
+rustfs_install_packages: true
+rustfs_system_packages:
+  - bash
+  - libc6
+  - openssl
+  - ca-certificates
 
 # ----------------------------------------------------------------------------
 # Service identity
@@ -70,6 +82,7 @@ rustfs_volumes:
 # Data directories to create on each node (must match the volume notation
 # above). These are expected to be separate XFS-formatted disks mounted in
 # JBOD mode - the role only creates the directories, it does not format disks.
+# See the "Disk preparation" section of the README for a formatting guide.
 rustfs_make_datadirs: true
 rustfs_datadirs:
   - /data/rustfs0
@@ -80,8 +93,35 @@ rustfs_datadirs:
 # ----------------------------------------------------------------------------
 # Logging
 # ----------------------------------------------------------------------------
-rustfs_log_dir: /var/logs/rustfs
-rustfs_log_level: error          # maps to RUST_LOG
+rustfs_log_dir: /var/log/rustfs
+rustfs_log_level: error          # maps to RUSTFS_OBS_LOGGER_LEVEL / RUST_LOG
+
+# --- Log cleanup / rolling files -------------------------------------------
+# Handled by the rustfs-obs log cleaner. See:
+#   https://github.com/rustfs/rustfs/blob/main/crates/obs/README.md
+# Total size cap for the log directory (bytes). Default 2 GiB.
+rustfs_log_max_total_size_bytes: 2147483648
+# Per-file size cap in bytes; 0 = unlimited.
+rustfs_log_max_single_file_size_bytes: 0
+# Number of rolling files to keep.
+rustfs_log_keep_files: 30
+# Rotation granularity: minutely | hourly | daily.
+rustfs_log_rotation_time: hourly
+# Compress rotated files before deleting them.
+rustfs_log_compress_old_files: true
+# Compression codec: zstd | gzip.
+rustfs_log_compression_algorithm: zstd
+# Delete compressed archives older than N days; 0 = keep forever.
+rustfs_log_compressed_file_retention_days: 30
+# How often the cleanup task runs (seconds).
+rustfs_log_cleanup_interval_seconds: 1800
+# Parallel (work-stealing) compression and worker count.
+rustfs_log_parallel_compress: true
+rustfs_log_parallel_workers: 6
+# zstd level 1 (fastest) - 21 (best ratio).
+rustfs_log_zstd_compression_level: 8
+# Report deletions without removing files (useful for auditing).
+rustfs_log_dry_run: false
 
 # Free-form text appended verbatim to the environment file for any extra
 # RUSTFS_* variables not modelled above.
@@ -109,10 +149,27 @@ rustfs_sysctl_settings:
   vm.swappiness: 10
   net.core.somaxconn: 32768
 
-# Enable io_uring. Ubuntu 24.04 ships kernel.io_uring_disabled=2 (disabled for
-# everyone) by default; setting it to 0 lets RustFS use io_uring for higher I/O
-# throughput.
+# ----------------------------------------------------------------------------
+# io_uring (opt-in read backend)
+# ----------------------------------------------------------------------------
+# As of RustFS 1.0.0 io_uring is an opt-in read path, disabled by default and
+# enabled per-process with RUSTFS_IO_URING_READ_ENABLE=true. It requires
+# Linux 5.10+ to be effective. No kernel-wide sysctl is required. See:
+#   https://docs.rustfs.com/en/installation/requirement/checklists/software-checklists
+#   https://github.com/rustfs/rustfs/blob/main/docs/operations/io-uring-initialization.md
 rustfs_enable_io_uring: true
+
+# Optional io_uring tuning. Leave null to use the RustFS defaults; each value
+# is only written to the environment file when set.
+#   RUSTFS_IO_URING_SHARDS                 per-disk shard count
+#   RUSTFS_IO_URING_MAX_DRIVER_THREADS     process-wide driver-thread budget (0 = unlimited)
+#   RUSTFS_IO_URING_READ_BUDGET_TOTAL_BYTES / ..._DRIVER_BYTES   shared read budget
+#   RUSTFS_IO_URING_READ_RESULT_BUDGET_BYTES                     returned-result budget
+rustfs_io_uring_shards: null
+rustfs_io_uring_max_driver_threads: null
+rustfs_io_uring_read_budget_total_bytes: null
+rustfs_io_uring_read_budget_driver_bytes: null
+rustfs_io_uring_read_result_budget_bytes: null
 
 # ----------------------------------------------------------------------------
 # Firewall (optional)

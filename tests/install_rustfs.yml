@@ -14,7 +14,7 @@
         name: ../../../storage/rustfs
   vars:
     # ---- binary -----------------------------------------------------------
-    rustfs_version: 1.0.0-beta.8
+    rustfs_version: 1.0.0
     rustfs_download_url: "https://github.com/rustfs/rustfs/releases/download/{{ rustfs_version }}/rustfs-linux-x86_64-gnu-v{{ rustfs_version }}.zip"
     rustfs_download_local_dir: /tmp
     # Online deploy. For air-gapped: set this to false and pre-stage the
@@ -48,11 +48,18 @@
       - /data/rustfs3
 
     # ---- logging ----------------------------------------------------------
-    rustfs_log_dir: /var/logs/rustfs
+    rustfs_log_dir: /var/log/rustfs
     rustfs_log_level: error
+
+    # ---- log cleanup / rolling files -------------------------------------
+    rustfs_log_keep_files: 30
+    rustfs_log_max_total_size_bytes: 2147483648
+    rustfs_log_compression_algorithm: zstd
+    rustfs_log_compressed_file_retention_days: 30
 
     # ---- kernel tuning + io_uring ----------------------------------------
     rustfs_tune_kernel: true
+    # Opt-in io_uring read backend (no kernel sysctl required in 1.0.0).
     rustfs_enable_io_uring: true
 
     # ---- firewall (Ubuntu uses ufw by default; off here) -----------------

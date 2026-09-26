@@ -1,6 +1,16 @@
 ---
 # Install the RustFS binary and prepare the filesystem layout
 
+# --- required standard tools ----------------------------------------------
+# The software checklist requires bash, glibc and openssl to be present. On
+# Debian/Ubuntu glibc is provided by the `libc6` package (see defaults).
+- name: install | ensure standard system tools are present
+  become: true
+  ansible.builtin.package:
+    name: "{{ rustfs_system_packages }}"
+    state: present
+  when: rustfs_install_packages
+
 # --- service user / group (skipped when running as root) ------------------
 - name: install | add rustfs group
   become: true

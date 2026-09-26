@@ -12,15 +12,6 @@
     reload: true
   loop: "{{ rustfs_sysctl_settings | dict2items }}"
 
-- name: kernel-tuning | enable io_uring (kernel.io_uring_disabled=0)
-  become: true
-  ansible.posix.sysctl:
-    name: kernel.io_uring_disabled
-    value: "0"
-    sysctl_file: "{{ rustfs_sysctl_file }}"
-    sysctl_set: true
-    state: present
-    reload: true
-  when: rustfs_enable_io_uring
-  # Older kernels (< 6.6) do not expose this tunable; ignore if absent.
-  failed_when: false
+# NOTE: io_uring is no longer enabled through kernel.io_uring_disabled here.
+# Since RustFS 1.0.0 it is an opt-in read backend controlled per-process by
+# RUSTFS_IO_URING_READ_ENABLE (see templates/rustfs.env.j2 and defaults).
