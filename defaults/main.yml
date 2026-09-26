@@ -34,10 +34,8 @@ rustfs_bin_path: /usr/local/bin/rustfs
 #   https://docs.rustfs.com/en/installation/requirement/checklists/software-checklists
 rustfs_install_packages: true
 rustfs_system_packages:
-  - bash
   - libc6
   - openssl
-  - ca-certificates
 
 # ----------------------------------------------------------------------------
 # Service identity
@@ -65,8 +63,19 @@ rustfs_console_port: 9001
 # ----------------------------------------------------------------------------
 # Credentials (CHANGE THESE - keep them identical across every node)
 # ----------------------------------------------------------------------------
+# RustFS 1.0.0 fails closed on multi-node clusters that still use the public
+# default "rustfsadmin": it refuses to derive the internode RPC secret from a
+# default credential pair. Change BOTH keys (or set rustfs_rpc_secret below).
 rustfs_access_key: rustfsadmin
 rustfs_secret_key: rustfsadmin
+
+# Internode RPC authentication secret (RUSTFS_RPC_SECRET).
+# Required when the active access/secret key pair is left at the default.
+# When empty, RustFS derives it from a NON-default access/secret key pair, so
+# setting strong `rustfs_access_key` / `rustfs_secret_key` is usually enough.
+# If set, it MUST be identical on every node. Generate with:
+#   openssl rand -base64 32
+rustfs_rpc_secret: ""
 
 # ----------------------------------------------------------------------------
 # Volumes / topology

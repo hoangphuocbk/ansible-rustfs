@@ -79,7 +79,8 @@ See [defaults/main.yml](defaults/main.yml) for the full list. Key variables:
 | `rustfs_user` / `rustfs_group` | `rustfs` | Service identity (set `root` to match upstream). |
 | `rustfs_address` | `:9000` | S3 API listen address. |
 | `rustfs_console_enable` / `rustfs_console_address` | `true` / `:9001` | Web console. |
-| `rustfs_access_key` / `rustfs_secret_key` | `rustfsadmin` | Root credentials - **change these**. |
+| `rustfs_access_key` / `rustfs_secret_key` | `rustfsadmin` | Root credentials - **change both** (see note below). |
+| `rustfs_rpc_secret` | `""` | Internode RPC secret; required if credentials stay default. |
 | `rustfs_volumes` | 4x4 expansion | `RUSTFS_VOLUMES`, identical on every node. |
 | `rustfs_datadirs` | `/data/rustfs0..3` | Data directories to create. |
 | `rustfs_log_dir` / `rustfs_log_level` | `/var/log/rustfs` / `error` | Logging. |
@@ -152,6 +153,7 @@ Example Playbook
       vars:
         rustfs_access_key: "rustfsadmin"
         rustfs_secret_key: "a-long-random-secret"
+        rustfs_rpc_secret: "a-long-random-rpc-secret"
         rustfs_volumes:
           - "http://node{1...4}:9000/data/rustfs{0...3}"
         rustfs_datadirs:

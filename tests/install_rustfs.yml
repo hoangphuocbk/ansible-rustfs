@@ -11,7 +11,7 @@
   tasks:
     - name: Include rustfs role
       include_role:
-        name: ../../../storage/rustfs
+        name: ../../ansible-rustfs/
   vars:
     # ---- binary -----------------------------------------------------------
     rustfs_version: 1.0.0
@@ -27,15 +27,16 @@
     rustfs_group: rustfs-user
 
     # ---- listeners --------------------------------------------------------
-    rustfs_address: ":9000"
+    rustfs_address: "{{ hostvars[inventory_hostname]['ansible_' + rustfs_bind_interface]['ipv4']['address'] }}:{{ rustfs_api_port }}"
     rustfs_api_port: 9000
     rustfs_console_enable: true
-    rustfs_console_address: ":9001"
+    rustfs_console_address: "{{ hostvars[inventory_hostname]['ansible_' + rustfs_bind_interface]['ipv4']['address'] }}:{{ rustfs_console_port }}"
     rustfs_console_port: 9001
 
     # ---- credentials (CHANGE ME) -----------------------------------------
     rustfs_access_key: "rustfsadmin"
     rustfs_secret_key: "ChangeMe-Str0ng-Secret"
+    rustfs_rpc_secret: "ChangeMe-Shared-Rpc-Secret"
 
     # ---- topology: 3 nodes x 4 disks -------------------------------------
     rustfs_volumes:
@@ -65,7 +66,7 @@
     # ---- firewall (Ubuntu uses ufw by default; off here) -----------------
     rustfs_configure_iptables: false
     rustfs_cluster: rustfs-cluster
-    rustfs_bind_interface: eth1
+    rustfs_bind_interface: enp0s8
 
     # extra RUSTFS_* variables
     rustfs_env_extra:
