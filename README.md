@@ -1,7 +1,7 @@
 RustFS Installation
 ===================
 
-Installs [RustFS](https://rustfs.com) 1.0.0 - a high-performance, S3-compatible,
+Installs [RustFS](https://rustfs.com) 1.0.1 - a high-performance, S3-compatible,
 distributed object storage server - on Ubuntu 24.04 virtual machines, managed
 by `systemd`. Supports **air-gapped** environments, applies OS kernel tuning,
 installs the required standard tools and enables the opt-in `io_uring` read
@@ -13,6 +13,35 @@ References:
 - https://docs.rustfs.com/en/installation/requirement/checklists/software-checklists
 - https://github.com/rustfs/rustfs/blob/main/docs/operations/io-uring-initialization.md
 - https://github.com/rustfs/rustfs/blob/main/crates/obs/README.md
+
+What's new in 1.0.1
+-------------------
+
+The role tracks the upstream [1.0.1 release](https://github.com/rustfs/rustfs/releases/tag/1.0.1)
+(385 commits over 1.0.0). Notable changes relevant to this deployment:
+
+- **io_uring read path** - integrated backend improvements plus a new
+  per-operation size cap `RUSTFS_IO_URING_READ_CHUNK_BYTES` (4 KiB-128 MiB),
+  exposed here as `rustfs_io_uring_read_chunk_bytes`.
+- **Integrity tooling** - inventory, audit and protected migration.
+- **S3 Tables** - support for staged table creation.
+- **Event notifications** - exposes the subscriptions used by event destinations.
+- **Performance** - signed PUTs skip a redundant content-sha256 pass, multipart
+  I/O setup and metadata reads are parallelized, and S3 Select `ScanRange`
+  scanning is faster.
+- **Packaged artifacts** - Linux `.deb` and `.rpm` packages are published for
+  both `gnu` and `musl` on amd64/arm64, and the CLI is now included in the
+  Linux zip artifacts this role uses.
+- **Reliability fixes** across heal, scanner, replication, readiness and
+  decommission paths - see the release notes for the full list.
+- **Enterprise Connect diagnostics** (offline CPU/network/lock/API profiling and
+  signed health jobs) - not used by this standalone role.
+
+Beyond the 1.0.1 changes, the role also models the console URL prefix
+(`rustfs_console_prefix`) and per-service CORS allow-lists
+(`rustfs_cors_allowed_origins`, `rustfs_console_cors_allowed_origins`). Both
+services are **same-origin only by default**, so set an allow-list for
+cross-origin browser access.
 
 Requirements
 ------------
@@ -69,7 +98,7 @@ See [defaults/main.yml](defaults/main.yml) for the full list. Key variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `rustfs_version` | `1.0.0` | Release used to build the download URL. |
+| `rustfs_version` | `1.0.1` | Release used to build the download URL. |
 | `rustfs_download_url` | GitHub release zip | Binary archive URL (online deploys). |
 | `enable_download_binary` | `true` | `false` for air-gapped (pre-stage binary). |
 | `rustfs_download_local_dir` | `/tmp` | Control-node staging dir for the binary. |
@@ -79,6 +108,9 @@ See [defaults/main.yml](defaults/main.yml) for the full list. Key variables:
 | `rustfs_user` / `rustfs_group` | `rustfs` | Service identity (set `root` to match upstream). |
 | `rustfs_address` | `:9000` | S3 API listen address. |
 | `rustfs_console_enable` / `rustfs_console_address` | `true` / `:9001` | Web console. |
+| `rustfs_console_prefix` | `""` | Console URL path prefix for reverse-proxy subpaths. |
+| `rustfs_cors_allowed_origins` | `""` | S3 endpoint CORS allow-list (same-origin only when empty). |
+| `rustfs_console_cors_allowed_origins` | `""` | Console CORS allow-list (same-origin only when empty). |
 | `rustfs_access_key` / `rustfs_secret_key` | `rustfsadmin` | Root credentials - **change both** (see note below). |
 | `rustfs_rpc_secret` | `""` | Internode RPC secret; required if credentials stay default. |
 | `rustfs_volumes` | 4x4 expansion | `RUSTFS_VOLUMES`, identical on every node. |
@@ -86,6 +118,7 @@ See [defaults/main.yml](defaults/main.yml) for the full list. Key variables:
 | `rustfs_log_dir` / `rustfs_log_level` | `/var/log/rustfs` / `error` | Logging. |
 | `rustfs_tune_kernel` | `true` | Apply sysctl performance tuning. |
 | `rustfs_enable_io_uring` | `true` | Set `RUSTFS_IO_URING_READ_ENABLE`. |
+| `rustfs_io_uring_read_chunk_bytes` | `null` | Per-operation io_uring read cap (4 KiB-128 MiB). |
 | `rustfs_configure_iptables` | `false` | Open API/console ports to cluster peers. |
 
 ### Kernel tuning applied
@@ -101,12 +134,13 @@ vm.swappiness = 10
 net.core.somaxconn = 32768
 ```
 
-> **io_uring:** since RustFS 1.0.0 `io_uring` is an opt-in **read** backend,
+> **io_uring:** since RustFS 1.0.x `io_uring` is an opt-in **read** backend,
 > disabled by default. The role enables it with
 > `RUSTFS_IO_URING_READ_ENABLE=true` when `rustfs_enable_io_uring: true` - no
 > kernel-wide `kernel.io_uring_disabled` sysctl is needed (that stale setting
 > was removed). Optional tuning is available via `rustfs_io_uring_shards`,
-> `rustfs_io_uring_max_driver_threads` and the shared read-budget variables.
+> `rustfs_io_uring_max_driver_threads`, the shared read-budget variables and
+> `rustfs_io_uring_read_chunk_bytes` (added in 1.0.1).
 
 ### Log cleanup
 
@@ -134,8 +168,8 @@ Air-gapped deployment
 
 1. On a machine with internet access, download and extract the binary:
    ```
-   wget https://github.com/rustfs/rustfs/releases/download/1.0.0/rustfs-linux-x86_64-musl-v1.0.0.zip
-   unzip rustfs-linux-x86_64-musl-v1.0.0.zip   # produces ./rustfs
+   wget https://github.com/rustfs/rustfs/releases/download/1.0.1/rustfs-linux-x86_64-gnu-v1.0.1.zip
+   unzip rustfs-linux-x86_64-gnu-v1.0.1.zip   # produces ./rustfs
    ```
 2. Copy the extracted `rustfs` binary to the Ansible **control node** at
    `{{ rustfs_download_local_dir }}/rustfs` (default `/tmp/rustfs`).

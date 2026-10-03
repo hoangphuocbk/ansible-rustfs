@@ -10,9 +10,12 @@
 # ----------------------------------------------------------------------------
 # Installation / binary staging
 # ----------------------------------------------------------------------------
-# RustFS is shipped as a single static (musl) binary inside a zip archive.
-rustfs_version: "1.0.0"
-rustfs_download_url: "https://github.com/rustfs/rustfs/releases/download/{{ rustfs_version }}/rustfs-linux-x86_64-musl-v{{ rustfs_version }}.zip"
+# RustFS is shipped as a single static binary inside a zip archive.
+# 1.0.1 also publishes .deb and .rpm packages (gnu and musl, amd64/arm64) and
+# now bundles the CLI in the Linux artifacts - this role still uses the zip.
+# This role fetches the glibc (gnu) build; override with "-musl-" for musl.
+rustfs_version: "1.0.1"
+rustfs_download_url: "https://github.com/rustfs/rustfs/releases/download/{{ rustfs_version }}/rustfs-linux-x86_64-gnu-v{{ rustfs_version }}.zip"
 
 # Local (control node) staging directory.
 #   - online deploy : the archive is downloaded here and unpacked.
@@ -60,10 +63,23 @@ rustfs_console_enable: true
 rustfs_console_address: ":9001"
 rustfs_console_port: 9001
 
+# Embedded console URL path prefix (RUSTFS_CONSOLE_PREFIX), e.g. when the
+# console is served behind a reverse proxy on a subpath
+# (https://host/rustfs/console). Read once at startup. Leave empty to keep the
+# built-in default "/rustfs/console".
+rustfs_console_prefix: ""
+
+# CORS allow-lists (comma-separated origins, or "*").
+# RustFS 1.0.x defaults both to empty = same-origin only, so browsers cannot
+# read S3/console responses cross-origin unless an origin is listed here.
+# Only rendered when non-empty so the secure default is preserved.
+rustfs_cors_allowed_origins: ""           # RUSTFS_CORS_ALLOWED_ORIGINS (S3 API)
+rustfs_console_cors_allowed_origins: ""   # RUSTFS_CONSOLE_CORS_ALLOWED_ORIGINS
+
 # ----------------------------------------------------------------------------
 # Credentials (CHANGE THESE - keep them identical across every node)
 # ----------------------------------------------------------------------------
-# RustFS 1.0.0 fails closed on multi-node clusters that still use the public
+# RustFS 1.0.x fails closed on multi-node clusters that still use the public
 # default "rustfsadmin": it refuses to derive the internode RPC secret from a
 # default credential pair. Change BOTH keys (or set rustfs_rpc_secret below).
 rustfs_access_key: rustfsadmin
@@ -161,7 +177,7 @@ rustfs_sysctl_settings:
 # ----------------------------------------------------------------------------
 # io_uring (opt-in read backend)
 # ----------------------------------------------------------------------------
-# As of RustFS 1.0.0 io_uring is an opt-in read path, disabled by default and
+# As of RustFS 1.0.x io_uring is an opt-in read path, disabled by default and
 # enabled per-process with RUSTFS_IO_URING_READ_ENABLE=true. It requires
 # Linux 5.10+ to be effective. No kernel-wide sysctl is required. See:
 #   https://docs.rustfs.com/en/installation/requirement/checklists/software-checklists
@@ -179,6 +195,9 @@ rustfs_io_uring_max_driver_threads: null
 rustfs_io_uring_read_budget_total_bytes: null
 rustfs_io_uring_read_budget_driver_bytes: null
 rustfs_io_uring_read_result_budget_bytes: null
+# Maximum logical size of one io_uring read operation, in bytes
+# (4 KiB .. 128 MiB). RustFS 1.0.1 added this knob; unset keeps the 128 MiB cap.
+rustfs_io_uring_read_chunk_bytes: null
 
 # ----------------------------------------------------------------------------
 # Firewall (optional)

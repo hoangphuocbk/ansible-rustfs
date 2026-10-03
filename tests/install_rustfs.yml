@@ -14,7 +14,7 @@
         name: ../../ansible-rustfs/
   vars:
     # ---- binary -----------------------------------------------------------
-    rustfs_version: 1.0.0
+    rustfs_version: 1.0.1
     rustfs_download_url: "https://github.com/rustfs/rustfs/releases/download/{{ rustfs_version }}/rustfs-linux-x86_64-gnu-v{{ rustfs_version }}.zip"
     rustfs_download_local_dir: /tmp
     # Online deploy. For air-gapped: set this to false and pre-stage the
@@ -60,8 +60,16 @@
 
     # ---- kernel tuning + io_uring ----------------------------------------
     rustfs_tune_kernel: true
-    # Opt-in io_uring read backend (no kernel sysctl required in 1.0.0).
+    # Opt-in io_uring read backend (no kernel sysctl required in 1.0.x).
     rustfs_enable_io_uring: true
+    # rustfs_io_uring_read_chunk_bytes: 8388608   # optional per-op read cap
+
+    # ---- console (1.0.1) -------------------------------------------------
+    # Serve the console on a reverse-proxy subpath, e.g. /rustfs/console:
+    # rustfs_console_prefix: "/rustfs/console"
+    # Cross-origin browser access is denied by default; allow-list as needed:
+    # rustfs_cors_allowed_origins: "https://app.example.com"
+    # rustfs_console_cors_allowed_origins: "https://app.example.com"
 
     # ---- firewall (Ubuntu uses ufw by default; off here) -----------------
     rustfs_configure_iptables: false
