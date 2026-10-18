@@ -13,6 +13,8 @@ References:
 - https://docs.rustfs.com/en/installation/requirement/checklists/software-checklists
 - https://github.com/rustfs/rustfs/blob/main/docs/operations/io-uring-initialization.md
 - https://github.com/rustfs/rustfs/blob/main/crates/obs/README.md
+- https://docs.rustfs.com/en/administration/protocols/ftps
+- https://docs.rustfs.com/en/integration/tls-configured
 - [CHANGELOG.md](CHANGELOG.md) - release notes and configuration changes
 
 Requirements
@@ -78,11 +80,19 @@ See [defaults/main.yml](defaults/main.yml) for the full list. Key variables:
 | `rustfs_install_packages` | `true` | Install `rustfs_system_packages`. |
 | `rustfs_system_packages` | `bash`, `libc6`, `openssl`, `ca-certificates` | Standard tools. |
 | `rustfs_user` / `rustfs_group` | `rustfs` | Service identity (set `root` to match upstream). |
+| `rustfs_working_directory` | `/opt/rustfs` | systemd `WorkingDirectory` (created by the role). |
 | `rustfs_address` | `:9000` | S3 API listen address. |
 | `rustfs_console_enable` / `rustfs_console_address` | `true` / `:9001` | Web console. |
 | `rustfs_console_prefix` | `""` | Console URL path prefix for reverse-proxy subpaths. |
 | `rustfs_cors_allowed_origins` | `""` | S3 endpoint CORS allow-list (same-origin only when empty). |
 | `rustfs_console_cors_allowed_origins` | `""` | Console CORS allow-list (same-origin only when empty). |
+| `rustfs_ftp_enable` / `rustfs_ftp_address` | `false` / `127.0.0.1:8021` | Plain FTP listener (testing only; loopback by default). |
+| `rustfs_ftp_passive_ports` / `rustfs_ftp_external_ip` | `40000-50000` / `""` | FTP passive range and NAT-advertised address. |
+| `rustfs_ftps_enable` / `rustfs_ftps_address` | `false` / `0.0.0.0:8022` | Explicit FTPS (FTPES) listener. |
+| `rustfs_ftps_certs_dir` | `/etc/rustfs/ftps-certs` | Directory holding `rustfs_cert.pem` and `rustfs_key.pem`. |
+| `rustfs_ftps_self_signed` | `false` | Generate a test-only self-signed certificate. |
+| `rustfs_ftps_self_signed_*` | see defaults | CN, SANs, key size, validity and renewal window. |
+| `rustfs_ftps_passive_ports` / `rustfs_ftps_external_ip` | `40000-50000` / `""` | FTPS passive range and NAT-advertised address. |
 | `rustfs_access_key` / `rustfs_secret_key` | `rustfsadmin` | Root credentials - **change both** (see note below). |
 | `rustfs_rpc_secret` | `""` | Internode RPC secret; required if credentials stay default. |
 | `rustfs_volumes` | 4x4 expansion | `RUSTFS_VOLUMES`, identical on every node. |
@@ -91,6 +101,7 @@ See [defaults/main.yml](defaults/main.yml) for the full list. Key variables:
 | `rustfs_tune_kernel` | `true` | Apply sysctl performance tuning. |
 | `rustfs_enable_io_uring` | `true` | Set `RUSTFS_IO_URING_READ_ENABLE`. |
 | `rustfs_io_uring_read_chunk_bytes` | `null` | Per-operation io_uring read cap (4 KiB-128 MiB). |
+| `rustfs_bind_interface` / `rustfs_bind_address` | `eth0` / derived | Cluster NIC and its IPv4 address; override the address for a VIP. |
 | `rustfs_configure_iptables` | `false` | Open API/console ports to cluster peers. |
 
 ### Kernel tuning applied
@@ -118,7 +129,9 @@ net.core.somaxconn = 32768
 
 Rolling-file logging and automatic cleanup are handled by `rustfs-obs`
 ([reference](https://github.com/rustfs/rustfs/blob/main/crates/obs/README.md)).
-The role renders these into the environment file:
+The systemd unit sends stdout/stderr to the journal; `rustfs-obs` writes the
+rotated files configured below to `rustfs_log_dir`. The role renders these into
+the environment file:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
@@ -134,6 +147,99 @@ The role renders these into the environment file:
 | `rustfs_log_parallel_workers` | `6` | Cleaner worker threads. |
 | `rustfs_log_zstd_compression_level` | `8` | zstd level 1-21. |
 | `rustfs_log_dry_run` | `false` | Report deletions without removing files. |
+
+FTP(S) gateway
+--------------
+
+RustFS can expose buckets over plain FTP or explicit FTPS (FTPES). Both
+listeners are disabled by default. Authenticate with a RustFS access key as the
+username and its secret key as the password; IAM policies are enforced per
+operation. `RMD` deletes the bucket and all its objects recursively, and
+rename/append operations are not supported. The standard RustFS release binary
+includes the `ftps` compile-time feature, so no custom build is required.
+
+> **Plain FTP is unencrypted.** It sends credentials and data in clear text and
+> is for loopback or isolated test networks only. The role defaults
+> `rustfs_ftp_address` to `127.0.0.1:8021` (upstream defaults to
+> `0.0.0.0:8021`); do not expose it to untrusted networks.
+
+For a loopback-only test listener:
+
+```yaml
+rustfs_ftp_enable: true
+rustfs_ftp_address: "127.0.0.1:8021"
+rustfs_ftp_passive_ports: "40000-40010"
+```
+
+### FTPS
+
+Enable explicit FTPS with a CA-issued certificate pair:
+
+```yaml
+rustfs_ftps_enable: true
+rustfs_ftps_address: "0.0.0.0:8022"
+rustfs_ftps_passive_ports: "40000-40100"
+# Only when clients connect through NAT or a load balancer:
+# rustfs_ftps_external_ip: "storage.example.com"
+
+# Must contain rustfs_cert.pem and rustfs_key.pem.
+rustfs_ftps_certs_dir: /etc/rustfs/ftps-certs
+rustfs_ftps_self_signed: false
+```
+
+The role creates the directory with mode `0700`, sets the private key to `0600`
+and the certificate to `0644`, and verifies that both files parse, the
+certificate is not expired and the public keys match. Clients must use
+**explicit FTP over TLS** (FTPES); implicit FTPS is not supported. Certificate
+SANs must cover every hostname or IP address clients use.
+
+For a **test-only** self-signed certificate:
+
+```yaml
+rustfs_ftps_enable: true
+rustfs_ftps_self_signed: true
+rustfs_ftps_self_signed_ip_sans:
+  - 10.0.20.21
+```
+
+The role generates a 4096-bit RSA, SHA-256 certificate valid for 365 days with
+`CA:false`, `serverAuth` EKU, key identifiers and SANs. The SAN list always
+includes the common name, inventory/host/FQDN names, `localhost`, `127.0.0.1`
+and the default IPv4 address; add any other names or addresses clients use. The
+certificate is regenerated when it expires within
+`rustfs_ftps_self_signed_renew_days` (default 30). Delete the files to force
+regeneration after changing SAN settings.
+
+Self-signed certificates are for testing and isolated internal use only. They
+are not publicly trusted, and clients must explicitly trust the certificate. In
+production, install a CA-issued pair and keep certificate verification enabled.
+The private key has no passphrase because the systemd service must read it
+unattended; the `0700` directory and `0600` key permissions are the protection.
+
+Passive mode needs inbound TCP on the FTPS control port (8022 by default) and
+on every port in `rustfs_ftps_passive_ports`; set `rustfs_ftps_external_ip`
+when clients connect through NAT. The role's optional cluster firewall only
+opens the S3/console ports to peers and does not cover FTP clients.
+
+Test the listener and certificate with:
+
+```
+openssl s_client -connect node1:8022 -starttls ftp
+```
+
+A client session with `lftp`:
+
+```
+lftp -u <access-key> -e '
+  set ftp:ssl-force true;
+  set ftp:ssl-protect-data true;
+  open ftp://storage.example.com:8022
+'
+```
+
+For the self-signed test certificate only, add `set ssl:verify-certificate no`
+to the session (never in production), or install the generated certificate in
+the client trust store.
 
 Air-gapped deployment
 ---------------------
@@ -175,6 +281,34 @@ A working multi-node example lives in [tests/install_rustfs.yml](tests/install_r
 > Run the play against the whole cluster at once (no `serial`) so handlers fire
 > across every node in the same run. Use `--limit` only when *adding* a new
 > storage pool.
+
+Troubleshooting
+---------------
+
+### Legacy `.minio.sys` probe errors
+
+On a native RustFS layout (`.rustfs.sys`), a multi-node cluster may log a burst
+of errors like this during startup:
+
+```json
+{"level":"ERROR","message":"internode rpc request failed",
+ "volume":".minio.sys","path":"format.json","error":"volume not found"}
+```
+
+This is the upstream legacy-MinIO migration probe: RustFS checks each disk once
+for `.minio.sys/format.json`, and a missing legacy volume is the expected result
+for a native RustFS cluster. The internode RPC layer logs the expected miss at
+`ERROR` before the caller treats it as "no legacy format". The burst is
+startup-only and safe to ignore when the readiness endpoint is healthy:
+
+```bash
+curl -s http://127.0.0.1:9000/health/ready
+```
+
+Do **not** create a fake `.minio.sys/format.json` to silence the message; it can
+be mistaken for migration evidence. A single
+`HTTP transport failed ... Cancelled` message around a restart is also
+transient (a client or peer disconnected during the restart).
 
 License
 -------

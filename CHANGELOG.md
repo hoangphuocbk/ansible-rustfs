@@ -4,6 +4,47 @@ All notable changes to this role. Version numbers follow the upstream
 [RustFS releases](https://github.com/rustfs/rustfs/releases) tracked by
 `rustfs_version`; role-specific changes are called out explicitly.
 
+## Unreleased
+
+### Added
+
+- Optional plain FTP and explicit FTPS (FTPES) listeners via
+  `rustfs_ftp_*` and `rustfs_ftps_*`, both disabled by default.
+- FTPS certificate management: the role creates and secures the certificate
+  directory, validates that the certificate and key parse, are not expired and
+  match, and can generate a self-signed pair with
+  `rustfs_ftps_self_signed: true`.
+- The test deployment now enables FTPS with a generated self-signed
+  certificate.
+
+### Changed
+
+- Added `rustfs_bind_address`, derived from `rustfs_bind_interface` by default,
+  and reused it for the test deployment's listener addresses and the optional
+  firewall rules instead of repeating the interface-fact expression.
+- Aligned the systemd unit with upstream: `rustfs server` startup, journal
+  stdout/stderr, `/opt/rustfs` working directory, `ProtectSystem=full`,
+  `ReadWritePaths` covering the configured data and log directories, and a
+  45-second stop timeout.
+- Documented the benign startup-only `.minio.sys` legacy-format probe errors
+  and the transient `HTTP transport failed ... Cancelled` messages.
+
+### Security
+
+- Plain FTP is disabled by default and binds to `127.0.0.1:8021` when enabled;
+  upstream defaults to `0.0.0.0:8021`.
+- Generated self-signed certificates use 4096-bit RSA, SHA-256, a 365-day
+  validity period, explicit SANs, `CA:false`, `serverAuth` EKU and key
+  identifiers. The key is `0600` inside a `0700` directory, has no passphrase
+  (the service must read it unattended), and is renewed 30 days before expiry.
+- Self-signed certificates remain opt-in and are documented as test-only; the
+  role never disables certificate verification on clients.
+
+### Fixed
+
+- The test play now defines the Vagrant host-only `eth1` interface only once
+  and asserts that it exists, fixing the undefined `ansible_enp0s8` error.
+
 ## 1.0.3 - 2026-10-17
 
 Upstream: [RustFS 1.0.3](https://github.com/rustfs/rustfs/releases/tag/1.0.3)

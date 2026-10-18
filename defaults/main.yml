@@ -52,6 +52,10 @@ rustfs_group: "{{ rustfs_user }}"
 
 rustfs_service_name: rustfs
 
+# systemd WorkingDirectory. The role creates it and assigns it to the service
+# identity.
+rustfs_working_directory: /opt/rustfs
+
 # ----------------------------------------------------------------------------
 # Listening addresses
 # ----------------------------------------------------------------------------
@@ -76,6 +80,54 @@ rustfs_console_prefix: ""
 # Only rendered when non-empty so the secure default is preserved.
 rustfs_cors_allowed_origins: ""           # RUSTFS_CORS_ALLOWED_ORIGINS (S3 API)
 rustfs_console_cors_allowed_origins: ""   # RUSTFS_CONSOLE_CORS_ALLOWED_ORIGINS
+
+# ----------------------------------------------------------------------------
+# FTP / FTPS gateway (both disabled by default)
+# ----------------------------------------------------------------------------
+# RustFS includes plain FTP and explicit FTPS (FTPES) listeners in the
+# standard binary. Plain FTP sends credentials and data in clear text, so the
+# role binds it to loopback by default. Enable it only for isolated testing;
+# use FTPS for every remote or production connection.
+rustfs_ftp_enable: false
+# Upstream default is 0.0.0.0:8021; the role binds to loopback for safety.
+rustfs_ftp_address: "127.0.0.1:8021"
+# Inclusive passive-mode data port range ("start-end").
+rustfs_ftp_passive_ports: "40000-50000"
+# Public IP or hostname advertised to passive clients behind NAT.
+# Empty leaves RUSTFS_FTP_EXTERNAL_IP unset.
+rustfs_ftp_external_ip: ""
+
+# Explicit FTPS (FTPES). RustFS requires TLS on both the control and data
+# channels; implicit FTPS is not supported. TLS is always enabled here.
+rustfs_ftps_enable: false
+rustfs_ftps_address: "0.0.0.0:8022"
+rustfs_ftps_passive_ports: "40000-50000"
+# Public IP or hostname advertised to passive clients behind NAT.
+# Empty leaves RUSTFS_FTPS_EXTERNAL_IP unset.
+rustfs_ftps_external_ip: ""
+
+# Directory containing rustfs_cert.pem and rustfs_key.pem. The role creates it
+# with mode 0700, sets the key to 0600 and the certificate to 0644, and
+# validates that the pair parses, is not expired and matches.
+rustfs_ftps_certs_dir: /etc/rustfs/ftps-certs
+
+# Testing-only feature flag: generate a self-signed certificate when FTPS is
+# enabled and the files are absent (or expire within the renewal window).
+# Use a certificate from a trusted CA in production. The key has no
+# passphrase because the systemd service must read it unattended; access is
+# restricted by the directory and file modes above.
+rustfs_ftps_self_signed: false
+# Subject CN and SANs. The generated SAN list always includes the CN,
+# inventory/host/FQDN names, localhost, 127.0.0.1 and the default IPv4
+# address; add every other DNS name or IP address clients use.
+rustfs_ftps_self_signed_common_name: "{{ inventory_hostname }}"
+rustfs_ftps_self_signed_dns_sans: []
+rustfs_ftps_self_signed_ip_sans: []
+# RSA key size and validity period. The role rejects key sizes below 2048.
+rustfs_ftps_self_signed_key_size: 4096
+rustfs_ftps_self_signed_days: 365
+# Regenerate the self-signed certificate when it expires within this many days.
+rustfs_ftps_self_signed_renew_days: 30
 
 # ----------------------------------------------------------------------------
 # Credentials (CHANGE THESE - keep them identical across every node)
@@ -121,6 +173,9 @@ rustfs_datadirs:
 # ----------------------------------------------------------------------------
 # Logging
 # ----------------------------------------------------------------------------
+# rustfs-obs writes rotated log files here. When the path is under /var/log,
+# the unit also sets LogsDirectory so systemd creates it for the service user;
+# stdout/stderr always go to the journal.
 rustfs_log_dir: /var/log/rustfs
 rustfs_log_level: error          # maps to RUSTFS_OBS_LOGGER_LEVEL / RUST_LOG
 
@@ -209,4 +264,8 @@ rustfs_io_uring_read_chunk_bytes: null
 # opens the API and console ports to the other members of `rustfs_cluster`.
 rustfs_configure_iptables: false
 rustfs_cluster: rustfs-cluster
+# Interface that carries cluster traffic, and its IPv4 address. The role
+# derives rustfs_bind_address from gathered interface facts; set it explicitly
+# to override the address (for example, to use a stable VIP).
 rustfs_bind_interface: eth0
+rustfs_bind_address: ""

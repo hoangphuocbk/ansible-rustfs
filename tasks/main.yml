@@ -1,9 +1,24 @@
 ---
 # tasks file for rustfs
 
+# Resolve once per host and promote to a fact so peer lookups can use
+# hostvars[item]['rustfs_bind_address'] without repeating the interface
+# expression. A non-empty rustfs_bind_address (play/host/extra var) wins.
+- name: main | resolve rustfs_bind_address
+  ansible.builtin.set_fact:
+    rustfs_bind_address: >-
+      {{ rustfs_bind_address | default('', true)
+         or hostvars[inventory_hostname]['ansible_' + rustfs_bind_interface]['ipv4']['address'] }}
+  when: >-
+    (rustfs_bind_address | default('', true) | length > 0) or
+    (('ansible_' ~ rustfs_bind_interface) in hostvars[inventory_hostname])
+
 - import_tasks: kernel-tuning.yaml
   when: rustfs_tune_kernel
 
 - import_tasks: install.yaml
+
+- import_tasks: ftps.yaml
+  when: rustfs_ftp_enable | bool or rustfs_ftps_enable | bool
 
 - import_tasks: configure.yaml

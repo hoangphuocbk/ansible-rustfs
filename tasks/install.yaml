@@ -70,6 +70,15 @@
   notify: restart rustfs service
 
 # --- directory layout -----------------------------------------------------
+- name: install | create rustfs working directory
+  become: true
+  file:
+    path: "{{ rustfs_working_directory }}"
+    state: directory
+    owner: "{{ rustfs_user }}"
+    group: "{{ rustfs_group }}"
+    mode: 0755
+
 - name: install | create rustfs log directory
   become: true
   file:

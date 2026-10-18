@@ -2,12 +2,22 @@
 # Configure the RustFS environment file, firewall and systemd service
 
 # --- firewall (optional) --------------------------------------------------
+- name: configure | require a resolved bind address for firewall rules
+  ansible.builtin.assert:
+    that:
+      - rustfs_bind_address | length > 0
+    fail_msg: >-
+      rustfs_configure_iptables is true but rustfs_bind_address is empty. Set
+      rustfs_bind_interface to an existing interface and gather facts, or set
+      rustfs_bind_address explicitly.
+  when: rustfs_configure_iptables | bool
+
 - name: configure | open RustFS ports to cluster peers - INPUT
   become: true
   iptables:
     action: insert
     chain: "{{ iptable_input | default('INPUT') }}"
-    source: "{{ hostvars[item]['ansible_' + rustfs_bind_interface]['ipv4']['address'] }}"
+    source: "{{ hostvars[item]['rustfs_bind_address'] }}"
     protocol: tcp
     destination_ports:
       - "{{ rustfs_api_port }}"
@@ -17,14 +27,14 @@
   loop: "{{ groups[rustfs_cluster] }}"
   when:
     - rustfs_configure_iptables
-    - hostvars[item]['ansible_' + rustfs_bind_interface]['ipv4']['address'] != ansible_default_ipv4.address
+    - hostvars[item]['rustfs_bind_address'] != rustfs_bind_address
 
 - name: configure | open RustFS ports to cluster peers - OUTPUT
   become: true
   iptables:
     action: insert
     chain: "{{ iptable_output | default('OUTPUT') }}"
-    destination: "{{ hostvars[item]['ansible_' + rustfs_bind_interface]['ipv4']['address'] }}"
+    destination: "{{ hostvars[item]['rustfs_bind_address'] }}"
     protocol: tcp
     destination_ports:
       - "{{ rustfs_api_port }}"
@@ -34,7 +44,7 @@
   loop: "{{ groups[rustfs_cluster] }}"
   when:
     - rustfs_configure_iptables
-    - hostvars[item]['ansible_' + rustfs_bind_interface]['ipv4']['address'] != ansible_default_ipv4.address
+    - hostvars[item]['rustfs_bind_address'] != rustfs_bind_address
 
 # --- environment file -----------------------------------------------------
 - name: configure | generate the RustFS environment file
