@@ -1,6 +1,6 @@
 ---
 
-# Multi-node multi-disk RustFS deployment (4 nodes x 4 disks).
+# Multi-node multi-disk RustFS deployment (3 nodes x 4 disks).
 #
 # RustFS requires every node to (re)start at the same time, so the play runs
 # against all hosts at once (no `serial`) - handlers fire across the whole
@@ -14,7 +14,7 @@
         name: ../../ansible-rustfs/
   vars:
     # ---- binary -----------------------------------------------------------
-    rustfs_version: 1.0.1
+    rustfs_version: 1.0.3
     rustfs_download_url: "https://github.com/rustfs/rustfs/releases/download/{{ rustfs_version }}/rustfs-linux-x86_64-gnu-v{{ rustfs_version }}.zip"
     rustfs_download_local_dir: /tmp
     # Online deploy. For air-gapped: set this to false and pre-stage the
@@ -64,7 +64,7 @@
     rustfs_enable_io_uring: true
     # rustfs_io_uring_read_chunk_bytes: 8388608   # optional per-op read cap
 
-    # ---- console (1.0.1) -------------------------------------------------
+    # ---- console (1.0.x) -------------------------------------------------
     # Serve the console on a reverse-proxy subpath, e.g. /rustfs/console:
     # rustfs_console_prefix: "/rustfs/console"
     # Cross-origin browser access is denied by default; allow-list as needed:
