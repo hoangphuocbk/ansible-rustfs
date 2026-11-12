@@ -4,10 +4,42 @@ All notable changes to this role. Version numbers follow the upstream
 [RustFS releases](https://github.com/rustfs/rustfs/releases) tracked by
 `rustfs_version`; role-specific changes are called out explicitly.
 
-## Unreleased
+## 1.0.5 - 2026-11-12
+
+Upstream: [RustFS 1.0.5](https://github.com/rustfs/rustfs/releases/tag/1.0.5),
+which includes the [1.0.4](https://github.com/rustfs/rustfs/releases/tag/1.0.4)
+patch.
 
 ### Added
 
+- `rustfs_checksums_url` and `rustfs_verify_checksum`: the control node now
+  downloads the release `SHA256SUMS` and passes the archive hash to `get_url`,
+  so a truncated or tampered zip is rejected before it is unpacked.
+- `rustfs_region` (`RUSTFS_REGION`). RustFS 1.0.5 validates the CreateBucket
+  `LocationConstraint` against the configured region; the role keeps the
+  upstream default (`us-east-1`) unless the variable is set.
+- `rustfs_veeam_sosapi_enable` (`RUSTFS_VEEAM_SOSAPI_ENABLE`, new in 1.0.5).
+  Veeam Backup & Replication SOSAPI virtual objects are enabled by default
+  upstream; the role renders the switch explicitly so it can be turned off.
+- `rustfs_console_oidc_session_duration`
+  (`RUSTFS_CONSOLE_OIDC_SESSION_DURATION`, new in 1.0.5): configurable OIDC
+  console credential lifetime and logout-token validity (1-604800 seconds;
+  upstream clamps larger values).
+- `rustfs_startup_peer_readmission_enable`
+  (`RUSTFS_STARTUP_PEER_READMISSION_ENABLE`, new in 1.0.5) and
+  `rustfs_startup_readiness_max_wait_seconds`
+  (`RUSTFS_STARTUP_READINESS_MAX_WAIT_SECS`). Startup readiness now waits for
+  a strict majority of each erasure set's peers to re-admit the node, and
+  always fails open.
+- `rustfs_internode_http_protocol` (`RUSTFS_INTERNODE_HTTP_PROTOCOL`, new in
+  1.0.5), defaulting to `auto`. On the plaintext internode transport this role
+  configures it keeps HTTP/1.1; if internode TLS is added later, TLS ALPN can
+  negotiate HTTP/2. Set `http1` to force HTTP/1.1 everywhere.
+- Scanner tuning from 1.0.5: `rustfs_scanner_walkers_per_disk`,
+  `rustfs_scanner_disk_io_budget_iops`,
+  `rustfs_scanner_disk_io_budget_bytes_per_sec` and
+  `rustfs_scanner_recovery_backoff_cap_seconds`. All default to `null`, so the
+  upstream media-aware defaults apply and the environment file stays minimal.
 - Optional plain FTP and explicit FTPS (FTPES) listeners via
   `rustfs_ftp_*` and `rustfs_ftps_*`, both disabled by default.
 - FTPS certificate management: the role creates and secures the certificate
@@ -19,6 +51,30 @@ All notable changes to this role. Version numbers follow the upstream
 
 ### Changed
 
+- `rustfs_version` and the test deployment now install **1.0.5** (gnu x86_64
+  zip) instead of 1.0.3. The 1.0.4 changes are included.
+- `rustfs_system_packages` now also installs `bash` and `ca-certificates`,
+  matching the documented software checklist. `ca-certificates` matters for
+  the 1.0.4 trust-root and certificate-verification refresh: the Linux zip
+  verifies TLS peers against the system trust store.
+- Kernel tuning now applies exactly the four sysctls from the upstream network
+  checklist (`net.core.rmem_max`, `net.core.wmem_max`,
+  `net.ipv4.tcp_keepalive_time`, `net.ipv4.tcp_slow_start_after_idle`). The
+  undocumented `vm.swappiness` and `net.core.somaxconn` settings were removed;
+  re-add them through `rustfs_sysctl_settings` if your environment needs them.
+- The README now maps the role to the upstream pre-installation checklists
+  (software, network, hardware and security): it documents what the role
+  handles and the operator-owned steps (time sync/DNS, disabling `mlocate` /
+  `auditd` / antivirus, SELinux/AppArmor, firewall, TLS certificates,
+  monitoring, backups and rollback). The OS/kernel requirement now says Linux
+  5.10+ is recommended (upstream supports Ubuntu 20.04+ and RHEL 8/9), and the
+  disk guide recommends mounting by filesystem UUID as upstream does.
+- The systemd unit raises `TimeoutStartSec` from 120s to 300s so it covers
+  RustFS initialization plus the default 120s peer re-admission budget.
+- Control-node downloads now verify TLS certificates by default through
+  `rustfs_download_validate_certs` (previously hard-coded
+  `validate_certs: false`). Set it to `false` only for a private mirror with a
+  self-signed certificate.
 - Added `rustfs_bind_address`, derived from `rustfs_bind_interface` by default,
   and reused it for the test deployment's listener addresses and the optional
   firewall rules instead of repeating the interface-fact expression.
@@ -31,6 +87,8 @@ All notable changes to this role. Version numbers follow the upstream
 
 ### Security
 
+- Archive checksum verification is enabled by default.
+- Download TLS verification is enabled by default.
 - Plain FTP is disabled by default and binds to `127.0.0.1:8021` when enabled;
   upstream defaults to `0.0.0.0:8021`.
 - Generated self-signed certificates use 4096-bit RSA, SHA-256, a 365-day
@@ -39,11 +97,73 @@ All notable changes to this role. Version numbers follow the upstream
   (the service must read it unattended), and is renewed 30 days before expiry.
 - Self-signed certificates remain opt-in and are documented as test-only; the
   role never disables certificate verification on clients.
+- 1.0.5 restricts root-derived service-account creation/import and removes
+  credential fields from rejected-key diagnostics. No role change is required,
+  but this reinforces keeping the root credential pair non-default.
+- Upstream flipped `RUSTFS_TRUSTED_PROXY_ENABLE_RFC7239` to `false` (legacy
+  `X-Forwarded-For` is used unless RFC 7239 is explicitly selected). The role
+  does not set it; set it via `rustfs_env_extra` only behind a trusted proxy.
 
 ### Fixed
 
 - The test play now defines the Vagrant host-only `eth1` interface only once
   and asserts that it exists, fixing the undefined `ansible_enp0s8` error.
+
+### Upstream 1.0.4 (included)
+
+- Refreshed certificate verification and bundled trust roots, including the
+  removal of the distrusted emSign ECC Root CA - G3 from the container images,
+  plus a dependency refresh. No server configuration changes and no role
+  variable changes.
+
+### Upstream 1.0.5 notable changes
+
+- **Upgrade ordering** - finish the upgrade on every node before adding or
+  removing pools, or retrying a decommission.
+- **Mixed-version DELETEs** - 1.0.5 nodes can return HTTP 503 for DELETE while
+  1.0.4 nodes are still in the cluster; retry after the full upgrade.
+- **Veeam SOSAPI** - authenticated GET/HEAD of the two SOSAPI keys returns
+  generated XML by default (`RUSTFS_VEEAM_SOSAPI_ENABLE`).
+- **Console OIDC session duration** - configurable credential and logout-token
+  lifetime (`RUSTFS_CONSOLE_OIDC_SESSION_DURATION`).
+- **IAM and policy** - wildcard support in IAM policy resources,
+  `s3:if-match` / `s3:if-none-match` condition keys, and object-creation
+  operation conditions.
+- **S3 API** - conditional bulk deletes, bucket location validation (now
+  enforced against `RUSTFS_REGION`), CORS for virtual-hosted-style requests,
+  and stricter multipart/listing error semantics.
+- **Startup readiness** - peer re-admission gate before a node reports ready.
+- **Scanner** - bucket walkers decoupled from disk count, per-disk I/O budgets
+  (media-aware `auto` default), a configurable recovery backoff cap, and
+  checkpoint/usage continuity fixes.
+- **Heal / decommission** - MRF lifecycle V2 checkpoints and reader capability
+  are opt-in via `RUSTFS_MRF_LIFECYCLE_V2_ENABLE`; only enable it after every
+  reader and the rollback binary are on 1.0.5. Decommission and heal retries
+  were substantially reworked.
+- **Internode transport** - `RUSTFS_INTERNODE_HTTP_PROTOCOL=auto` enables
+  TLS ALPN negotiation (HTTP/2 over TLS, HTTP/1.1 on plaintext). The HTTP/2
+  tuning knobs stay inert without TLS. The role now defaults to `auto`.
+- **Observability** - cgroup limit sampling, request entry-to-dispatch and
+  response-body completion metrics, scanner/heal walk metrics, and allocator
+  reclaim totals.
+- **Audit / notify** - admission rate limits for authorization-denial audit
+  entries (`RUSTFS_AUDIT_DENIAL_RATE`, `..._ANONYMOUS_RATE`) and a 1 GiB
+  per-target queue byte budget (`RUSTFS_TARGET_STORE_MAX_BYTES`). The role does
+  not configure audit or notify targets; pass these through `rustfs_env_extra`
+  when you do.
+- **Idle drive monitoring** - the scanner's idle-drive probes now honor the
+  upstream opt-out.
+- **Performance** - batched listings and metacache streams, bounded xl.meta
+  read workers with HEAD early-stop, fewer metadata clones, and lower
+  delete-recovery head-of-line blocking.
+
+### Upgrade notes
+
+- Run the play against the whole cluster and restart every node together;
+  RustFS forbids rolling restarts.
+- Complete the 1.0.5 upgrade on all nodes before any pool add/remove or
+  decommission retry, and retry DELETE calls that returned 503 while versions
+  were mixed.
 
 ## 1.0.3 - 2026-10-17
 

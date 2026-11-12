@@ -15,8 +15,19 @@
 # bundles the CLI in the Linux artifacts - this role still uses the zip.
 # This role fetches the glibc (gnu) build; override with "-musl-" for musl.
 # Since 1.0.2 the gnu artifacts pin a glibc 2.31 ABI floor.
-rustfs_version: "1.0.3"
+rustfs_version: "1.0.5"
 rustfs_download_url: "https://github.com/rustfs/rustfs/releases/download/{{ rustfs_version }}/rustfs-linux-x86_64-gnu-v{{ rustfs_version }}.zip"
+
+# Release checksum file published next to the archives. When
+# `rustfs_verify_checksum` is true the role downloads it and passes the hash of
+# `rustfs_download_url | basename` to get_url, so a truncated or tampered
+# archive is rejected before it is unpacked.
+rustfs_checksums_url: "https://github.com/rustfs/rustfs/releases/download/{{ rustfs_version }}/SHA256SUMS"
+rustfs_verify_checksum: true
+
+# Verify TLS certificates when downloading from the control node. Only disable
+# for a private mirror with a self-signed certificate.
+rustfs_download_validate_certs: true
 
 # Local (control node) staging directory.
 #   - online deploy : the archive is downloaded here and unpacked.
@@ -36,8 +47,14 @@ rustfs_bin_path: /usr/local/bin/rustfs
 #   `libc6` is the Debian/Ubuntu package that provides glibc; on RHEL-family
 #   distributions override this with `glibc`. See:
 #   https://docs.rustfs.com/en/installation/requirement/checklists/software-checklists
+# `ca-certificates` matters since RustFS 1.0.4: the change there covers
+# certificate verification and the bundled trust roots (the container images
+# drop the distrusted emSign ECC Root CA - G3). The Linux zip uses the system
+# trust store for TLS, so keep this package installed.
 rustfs_install_packages: true
 rustfs_system_packages:
+  - bash
+  - ca-certificates
   - libc6
   - openssl
 
@@ -73,6 +90,19 @@ rustfs_console_port: 9001
 # (https://host/rustfs/console). Read once at startup. Leave empty to keep the
 # built-in default "/rustfs/console".
 rustfs_console_prefix: ""
+
+# Console credential lifetime, in seconds, for credentials issued by the OIDC
+# callback (RUSTFS_CONSOLE_OIDC_SESSION_DURATION, new in 1.0.5). The same value
+# sets how long the console logout token stays valid. Valid range is 1-604800
+# (7 days); upstream clamps larger values. Only rendered when set; the upstream
+# default is 3600 seconds (1 hour).
+rustfs_console_oidc_session_duration: null
+
+# Veeam Backup & Replication SOSAPI virtual system objects (new in 1.0.5).
+# When true (the upstream default) authenticated GET/HEAD of the two SOSAPI
+# keys return generated XML. Set to false to restore the normal object path so
+# an object stored under one of those keys can be removed.
+rustfs_veeam_sosapi_enable: true
 
 # CORS allow-lists (comma-separated origins, or "*").
 # RustFS 1.0.x defaults both to empty = same-origin only, so browsers cannot
@@ -170,6 +200,33 @@ rustfs_datadirs:
   - /data/rustfs2
   - /data/rustfs3
 
+# S3 region (RUSTFS_REGION). RustFS 1.0.5 validates the CreateBucket
+# LocationConstraint against the configured region, so set this when clients
+# send a non-default location. Leave empty to keep the upstream default
+# (us-east-1) and omit the variable from the environment file.
+rustfs_region: ""
+
+# Internode HTTP data-plane protocol (RUSTFS_INTERNODE_HTTP_PROTOCOL, 1.0.5).
+# `auto` restores protocol negotiation: TLS ALPN can select HTTP/2 when
+# internode TLS is used, while the plaintext transport this role configures
+# stays on HTTP/1.1. `http1` forces HTTP/1.1 everywhere. Set the same value on
+# every node and restart the cluster together.
+# https://github.com/rustfs/rustfs/blob/1.0.5/docs/operations/internode-http-transport.md
+rustfs_internode_http_protocol: "auto"
+
+# ----------------------------------------------------------------------------
+# Startup readiness
+# ----------------------------------------------------------------------------
+# RustFS 1.0.5 holds startup readiness until a strict majority of each erasure
+# set's peers re-admit this node's drives, so a restarting node is not marked
+# ready while its peers still consider it offline. The gate fails open when
+# peers are unreachable or still on 1.0.4, and never affects steady-state
+# /health/ready. Disable to restore local-view-only startup readiness.
+rustfs_startup_peer_readmission_enable: true
+# Upper bound the gate waits for peers, in seconds (upstream default 120).
+# Only rendered when set. Keep it below the unit's TimeoutStartSec.
+rustfs_startup_readiness_max_wait_seconds: null
+
 # ----------------------------------------------------------------------------
 # Logging
 # ----------------------------------------------------------------------------
@@ -223,14 +280,17 @@ rustfs_restart_sec: 10s
 # ----------------------------------------------------------------------------
 rustfs_tune_kernel: true
 # Persisted to {{ rustfs_sysctl_file }} via ansible.posix.sysctl.
+# These are exactly the four settings listed in the upstream network
+# checklist. Add further keys through this mapping if your environment needs
+# them; the role no longer applies extra tuning that upstream does not
+# document (for example vm.swappiness or net.core.somaxconn).
+# https://docs.rustfs.com/en/installation/requirement/checklists/network-checklists
 rustfs_sysctl_file: /etc/sysctl.d/90-rustfs.conf
 rustfs_sysctl_settings:
   net.core.rmem_max: 16777216
   net.core.wmem_max: 16777216
   net.ipv4.tcp_keepalive_time: 600
   net.ipv4.tcp_slow_start_after_idle: 0
-  vm.swappiness: 10
-  net.core.somaxconn: 32768
 
 # ----------------------------------------------------------------------------
 # io_uring (opt-in read backend)
@@ -256,6 +316,23 @@ rustfs_io_uring_read_result_budget_bytes: null
 # Maximum logical size of one io_uring read operation, in bytes
 # (4 KiB .. 128 MiB). RustFS 1.0.1 added this knob; unset keeps the 128 MiB cap.
 rustfs_io_uring_read_chunk_bytes: null
+
+# ----------------------------------------------------------------------------
+# Scanner tuning (new in 1.0.5)
+# ----------------------------------------------------------------------------
+# All values are optional: null leaves the upstream default and omits the
+# variable from the environment file.
+# Bucket walkers per local disk, 1-16. Upstream default 1; raise it when
+# metadata scans are the bottleneck and the disks can absorb more read IOPS.
+rustfs_scanner_walkers_per_disk: null
+# Per-local-disk scanner I/O ceilings (operations/s and bytes/s). Upstream
+# default is "auto", which resolves a media-aware budget; "off" removes the
+# cap, a number sets an explicit budget.
+rustfs_scanner_disk_io_budget_iops: null
+rustfs_scanner_disk_io_budget_bytes_per_sec: null
+# Cap, in seconds, on the automatic scanner recovery retry backoff.
+# Upstream default 600.
+rustfs_scanner_recovery_backoff_cap_seconds: null
 
 # ----------------------------------------------------------------------------
 # Firewall (optional)

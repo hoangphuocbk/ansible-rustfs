@@ -40,7 +40,10 @@ RestartSec={{ rustfs_restart_sec }}
 
 # Type=notify waits for READY=1, so the startup timeout must cover RustFS
 # initialization plus runtime readiness checks on slower disks or cold starts.
-TimeoutStartSec=120s
+# Since 1.0.5 startup readiness also waits (up to
+# RUSTFS_STARTUP_READINESS_MAX_WAIT_SECS, default 120s) for peers to re-admit
+# this node, so keep this safely above that budget.
+TimeoutStartSec=300s
 TimeoutStopSec=45s
 
 # Hardening

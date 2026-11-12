@@ -24,7 +24,7 @@
         name: ../../ansible-rustfs/
   vars:
     # ---- binary -----------------------------------------------------------
-    rustfs_version: 1.0.3
+    rustfs_version: 1.0.5
     rustfs_download_url: "https://github.com/rustfs/rustfs/releases/download/{{ rustfs_version }}/rustfs-linux-x86_64-gnu-v{{ rustfs_version }}.zip"
     rustfs_download_local_dir: /tmp
     # Online deploy. For air-gapped: set this to false and pre-stage the
@@ -80,9 +80,25 @@
     # ---- console (1.0.x) -------------------------------------------------
     # Serve the console on a reverse-proxy subpath, e.g. /rustfs/console:
     # rustfs_console_prefix: "/rustfs/console"
+    # OIDC console session lifetime in seconds (1.0.5, 1-604800):
+    # rustfs_console_oidc_session_duration: 28800
     # Cross-origin browser access is denied by default; allow-list as needed:
     # rustfs_cors_allowed_origins: "https://app.example.com"
     # rustfs_console_cors_allowed_origins: "https://app.example.com"
+
+    # ---- 1.0.5 features --------------------------------------------------
+    # Internode data plane; plaintext stays HTTP/1.1, TLS ALPN may pick HTTP/2:
+    rustfs_internode_http_protocol: auto
+    # Veeam Backup & Replication SOSAPI virtual objects (enabled by default):
+    rustfs_veeam_sosapi_enable: true
+    # Hold startup readiness until peers re-admit the node (default true):
+    rustfs_startup_peer_readmission_enable: true
+    # rustfs_startup_readiness_max_wait_seconds: 120
+    # Scanner tuning; null keeps the upstream media-aware defaults:
+    # rustfs_scanner_walkers_per_disk: 2
+    # rustfs_scanner_disk_io_budget_iops: 200
+    # rustfs_scanner_disk_io_budget_bytes_per_sec: 33554432
+    # rustfs_scanner_recovery_backoff_cap_seconds: 600
 
     # ---- FTP(S) ----------------------------------------------------------
     # Plain FTP is intentionally disabled: it sends credentials and data in

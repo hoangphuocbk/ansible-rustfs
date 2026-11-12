@@ -1,7 +1,7 @@
 RustFS Installation
 ===================
 
-Installs [RustFS](https://rustfs.com) 1.0.3 - a high-performance, S3-compatible,
+Installs [RustFS](https://rustfs.com) 1.0.5 - a high-performance, S3-compatible,
 distributed object storage server - on Ubuntu 24.04 virtual machines, managed
 by `systemd`. Supports **air-gapped** environments, applies OS kernel tuning,
 installs the required standard tools and enables the opt-in `io_uring` read
@@ -20,11 +20,14 @@ References:
 Requirements
 ------------
 
-- Ubuntu 24.04 (Linux 5.x/6.x). The `io_uring` read backend requires kernel
-  5.10+ to be effective.
+- Ubuntu 24.04 LTS (the role targets 24.04; upstream supports Ubuntu 20.04+
+  and RHEL 8/9). Linux 5.10 or later is recommended; the optional `io_uring`
+  read backend requires it.
 - `ansible.posix` collection (for the `sysctl` module).
 - Standard tools `bash`, `glibc` (`libc6`) and `openssl` are installed by the
-  role (see `rustfs_system_packages`); `ca-certificates` is included for TLS.
+  role (see `rustfs_system_packages`); `ca-certificates` is included so the
+  server can verify TLS peers against the system trust store (RustFS 1.0.4
+  refreshed certificate verification and trust roots).
 - Each node should have its data disks **formatted XFS and mounted in JBOD
   mode** at the paths listed in `rustfs_datadirs`. The role creates the
   directories but does **not** format or mount disks - see
@@ -33,6 +36,61 @@ Requirements
   multi-disk deployment, with identical disk specs across the pool.
 - Sequential, resolvable hostnames (DNS or `/etc/hosts`) matching the
   `{x...y}` expansion in `rustfs_volumes`, and time sync across all nodes.
+
+Pre-installation checklist
+--------------------------
+
+The role implements the host-side items from the upstream
+[pre-installation checklists](https://docs.rustfs.com/en/installation/requirement/checklists)
+([software](https://docs.rustfs.com/en/installation/requirement/checklists/software-checklists),
+[network](https://docs.rustfs.com/en/installation/requirement/checklists/network-checklists),
+[hardware](https://docs.rustfs.com/en/installation/requirement/checklists/hardware-checklists),
+[security](https://docs.rustfs.com/en/installation/requirement/checklists/security-checklists)).
+Some items are deliberately outside the role because they are host- or
+organization-specific.
+
+**Handled by the role**
+
+- Installs the standard tools and root certificates (`bash`, `glibc`/`libc6`,
+  `openssl`, `ca-certificates`), the binary under `/usr/local/bin` with mode
+  `0755`, and the same version on every node.
+- Verifies the release `SHA256SUMS` before installing and verifies TLS on the
+  download itself.
+- Creates a dedicated, no-login service user/group and grants it access to the
+  data and log directories.
+- Applies the four sysctls from the network checklist and installs a hardened
+  `systemd` unit (`User=`, `EnvironmentFile=`, `ExecStart=`, resource limits).
+- Keeps CORS same-origin by default and FTPS certificates private (`0700`
+  directory, `0600` key).
+
+**Operator responsibilities**
+
+- **OS/kernel:** install Ubuntu 20.04+/RHEL 8/9 with Linux 5.10+, and keep the
+  OS, OpenSSL and RustFS patched.
+- **Interfering services:** disable file indexing and auditing services such
+  as `mlocate`, `auditd` and antivirus so they do not compete with RustFS I/O.
+- **Time sync and DNS:** configure chrony/`systemd-timesyncd` on every node
+  (drift under 1s in production) and make all `rustfs_volumes` hostnames
+  resolvable.
+- **Disks:** XFS on dedicated JBOD disks, no NFS, no hardware RAID; mount by
+  filesystem UUID and make the mount paths match `rustfs_datadirs`.
+- **Network:** homogeneous nodes, a separate storage network (leaf-spine,
+  redundant links, 25/100 GbE for production), jumbo frames only when the
+  whole path supports them, and firewall openings for TCP 9000/9001 (plus 443
+  when a TLS reverse proxy terminates HTTPS).
+- **Memory and capacity:** at least 2 GB for a test node; the hardware guide's
+  entry profile is 64 GB per node (the Linux prerequisites page recommends
+  128 GB for production). Size bandwidth and drives from the hardware guide.
+- **SELinux/AppArmor:** allow RustFS access to its binary, config, data and log
+  paths, or disable the policy if appropriate for your environment.
+- **TLS:** provide a CA-issued server certificate when exposing HTTPS; the
+  role does not manage the S3 TLS listener.
+- **Observability, backups and rollback:** configure Prometheus/Grafana,
+  audit-log export, configuration backups and a tested rollback plan.
+- **Data protection:** enable bucket versioning and Object Lock where
+  regulatory retention (WORM) applies.
+- **Production validation:** run the upstream 72-hour stress test (failover,
+  network partition, 120% burst writes) before go-live.
 
 Disk preparation
 ----------------
@@ -53,8 +111,11 @@ sudo lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,UUID,MOUNTPOINTS
 sudo mkfs.xfs -f -i size=512 -n ftype=1 -L RUSTFS0 /dev/sdb
 
 # 3. Create the mount point and a persistent fstab entry.
+#    Upstream recommends mounting by filesystem UUID (stable across reboots
+#    and duplicate labels); LABEL=RUSTFS0 works too.
 sudo mkdir -p /data/rustfs0
-echo 'LABEL=RUSTFS0 /data/rustfs0 xfs defaults,noatime,nodiratime 0 0' | sudo tee -a /etc/fstab
+UUID=$(sudo blkid -s UUID -o value /dev/sdb)
+echo "UUID=$UUID /data/rustfs0 xfs defaults,noatime,nodiratime 0 0" | sudo tee -a /etc/fstab
 
 # 4. Mount and verify (XFS + expected free space).
 sudo mount -a
@@ -63,7 +124,8 @@ sudo xfs_info /data/rustfs0
 ```
 
 Use one mount point and one `/etc/fstab` entry per disk, matching the paths in
-`rustfs_datadirs`. Keep labels and mount paths consistent across all nodes.
+`rustfs_datadirs`. Keep labels/UUIDs and mount paths consistent across all
+nodes.
 
 Role Variables
 --------------
@@ -72,18 +134,29 @@ See [defaults/main.yml](defaults/main.yml) for the full list. Key variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `rustfs_version` | `1.0.3` | Release used to build the download URL. |
+| `rustfs_version` | `1.0.5` | Release used to build the download URL. |
 | `rustfs_download_url` | GitHub release zip | Binary archive URL (online deploys). |
+| `rustfs_verify_checksum` / `rustfs_checksums_url` | `true` / release `SHA256SUMS` | Verify the archive before unpacking. |
+| `rustfs_download_validate_certs` | `true` | Verify TLS on control-node downloads. |
 | `enable_download_binary` | `true` | `false` for air-gapped (pre-stage binary). |
 | `rustfs_download_local_dir` | `/tmp` | Control-node staging dir for the binary. |
 | `rustfs_bin_path` | `/usr/local/bin/rustfs` | Install path on targets. |
 | `rustfs_install_packages` | `true` | Install `rustfs_system_packages`. |
-| `rustfs_system_packages` | `bash`, `libc6`, `openssl`, `ca-certificates` | Standard tools. |
+| `rustfs_system_packages` | `bash`, `ca-certificates`, `libc6`, `openssl` | Standard tools. |
 | `rustfs_user` / `rustfs_group` | `rustfs` | Service identity (set `root` to match upstream). |
 | `rustfs_working_directory` | `/opt/rustfs` | systemd `WorkingDirectory` (created by the role). |
 | `rustfs_address` | `:9000` | S3 API listen address. |
+| `rustfs_region` | `""` | `RUSTFS_REGION`; used for bucket location validation. |
+| `rustfs_internode_http_protocol` | `auto` | Internode data plane: `auto` (TLS ALPN) or `http1`. |
 | `rustfs_console_enable` / `rustfs_console_address` | `true` / `:9001` | Web console. |
 | `rustfs_console_prefix` | `""` | Console URL path prefix for reverse-proxy subpaths. |
+| `rustfs_console_oidc_session_duration` | `null` | OIDC console credential lifetime in seconds (1-604800). |
+| `rustfs_veeam_sosapi_enable` | `true` | Veeam SOSAPI virtual system objects (1.0.5). |
+| `rustfs_startup_peer_readmission_enable` | `true` | Hold startup readiness until peers re-admit the node (1.0.5). |
+| `rustfs_startup_readiness_max_wait_seconds` | `null` | Peer re-admission budget (upstream default 120s). |
+| `rustfs_scanner_walkers_per_disk` | `null` | Scanner walkers per local disk (1-16). |
+| `rustfs_scanner_disk_io_budget_iops` / `..._bytes_per_sec` | `null` | Per-disk scanner I/O ceilings (`auto`/`off`/number). |
+| `rustfs_scanner_recovery_backoff_cap_seconds` | `null` | Cap on scanner recovery retry backoff. |
 | `rustfs_cors_allowed_origins` | `""` | S3 endpoint CORS allow-list (same-origin only when empty). |
 | `rustfs_console_cors_allowed_origins` | `""` | Console CORS allow-list (same-origin only when empty). |
 | `rustfs_ftp_enable` / `rustfs_ftp_address` | `false` / `127.0.0.1:8021` | Plain FTP listener (testing only; loopback by default). |
@@ -104,6 +177,12 @@ See [defaults/main.yml](defaults/main.yml) for the full list. Key variables:
 | `rustfs_bind_interface` / `rustfs_bind_address` | `eth0` / derived | Cluster NIC and its IPv4 address; override the address for a VIP. |
 | `rustfs_configure_iptables` | `false` | Open API/console ports to cluster peers. |
 
+Advanced 1.0.4/1.0.5 opt-ins that this role does not model directly - audit
+denial rate limits, the notify/audit target queue byte budget, MRF lifecycle
+V2 and internode HTTP/2 over TLS ALPN - can be passed through
+`rustfs_env_extra`. See [CHANGELOG.md](CHANGELOG.md) for the details and
+preconditions.
+
 ### Kernel tuning applied
 
 Written to `/etc/sysctl.d/90-rustfs.conf`:
@@ -113,9 +192,13 @@ net.core.rmem_max = 16777216
 net.core.wmem_max = 16777216
 net.ipv4.tcp_keepalive_time = 600
 net.ipv4.tcp_slow_start_after_idle = 0
-vm.swappiness = 10
-net.core.somaxconn = 32768
 ```
+
+These are exactly the four settings from the upstream
+[network checklist](https://docs.rustfs.com/en/installation/requirement/checklists/network-checklists).
+The role does not apply undocumented extras (such as `vm.swappiness` or
+`net.core.somaxconn`); add them through `rustfs_sysctl_settings` if your
+environment needs them.
 
 > **io_uring:** since RustFS 1.0.x `io_uring` is an opt-in **read** backend,
 > disabled by default. The role enables it with
@@ -244,16 +327,19 @@ the client trust store.
 Air-gapped deployment
 ---------------------
 
-1. On a machine with internet access, download and extract the binary:
+1. On a machine with internet access, download, verify and extract the binary:
    ```
-   wget https://github.com/rustfs/rustfs/releases/download/1.0.3/rustfs-linux-x86_64-gnu-v1.0.3.zip
-   unzip rustfs-linux-x86_64-gnu-v1.0.3.zip   # produces ./rustfs
+   wget https://github.com/rustfs/rustfs/releases/download/1.0.5/rustfs-linux-x86_64-gnu-v1.0.5.zip
+   wget https://github.com/rustfs/rustfs/releases/download/1.0.5/SHA256SUMS
+   sha256sum -c --ignore-missing SHA256SUMS
+   unzip rustfs-linux-x86_64-gnu-v1.0.5.zip   # produces ./rustfs
    ```
 2. Copy the extracted `rustfs` binary to the Ansible **control node** at
    `{{ rustfs_download_local_dir }}/rustfs` (default `/tmp/rustfs`).
 3. Run the role with `enable_download_binary: false`. The role copies the
    pre-staged binary to every target host - no internet access required on
-   the targets or control node.
+   the targets or control node. Checksum verification only applies to online
+   downloads, so verify the archive manually as shown above.
 
 Example Playbook
 ----------------
@@ -281,6 +367,25 @@ A working multi-node example lives in [tests/install_rustfs.yml](tests/install_r
 > Run the play against the whole cluster at once (no `serial`) so handlers fire
 > across every node in the same run. Use `--limit` only when *adding* a new
 > storage pool.
+
+### Upgrading to 1.0.5
+
+- Complete the upgrade on **every** node before adding or removing pools, or
+  before retrying a decommission operation.
+- The security checklist mentions rolling restarts, but RustFS distributed
+  clusters require all nodes to restart together (see the note above); follow
+  the release-specific upgrade notes.
+- While 1.0.4 and 1.0.5 nodes coexist, DELETE requests served by a 1.0.5 node
+  may temporarily return HTTP 503. Retry them once every node runs 1.0.5.
+- Startup readiness now waits for a strict majority of each erasure set's
+  peers to re-admit the node (fails open when peers are unreachable or still
+  on 1.0.4). The unit's `TimeoutStartSec` is raised to 300s to cover the
+  default 120s budget; keep `rustfs_startup_readiness_max_wait_seconds` below
+  that value, or disable the gate with
+  `rustfs_startup_peer_readmission_enable: false`.
+- 1.0.4 refreshed certificate verification and the bundled trust roots. The
+  Linux zip uses the system trust store, so the role now installs
+  `ca-certificates` by default.
 
 Troubleshooting
 ---------------
