@@ -1,0 +1,213 @@
+---
+# FTP / FTPS gateway preparation.
+#
+# FTP and FTPS are separate listeners. Plain FTP needs no certificate material;
+# FTPS needs rustfs_cert.pem and rustfs_key.pem in RUSTFS_FTPS_CERTS_DIR.
+#
+# Certificate generation and inspection are delegated to community.crypto, so
+# every task in this file is idempotent and check-mode aware without any
+# command line argument lists.
+
+- name: FTPS | prepare certificate material
+  become: true
+  when: rustfs_ftps_enable | bool
+  block:
+    - name: FTPS | require a certificate directory
+      ansible.builtin.assert:
+        that:
+          - rustfs_ftps_certs_dir | length > 0
+        fail_msg: >-
+          rustfs_ftps_enable is true but rustfs_ftps_certs_dir is empty. Set it
+          to a directory containing rustfs_cert.pem and rustfs_key.pem.
+        quiet: true
+
+    - name: FTPS | validate the self-signed certificate settings
+      ansible.builtin.assert:
+        that:
+          - rustfs_ftps_self_signed_common_name | length > 0
+          - (rustfs_ftps_self_signed_key_size | int) >= 2048
+          - (rustfs_ftps_self_signed_days | int) >= 1
+          - (rustfs_ftps_self_signed_renew_days | int) >= 0
+          - (rustfs_ftps_self_signed_renew_days | int) < (rustfs_ftps_self_signed_days | int)
+        fail_msg: >-
+          Self-signed FTPS certificates require a non-empty common name, an RSA
+          key of at least 2048 bits, a positive validity period and a renewal
+          window shorter than that period.
+        quiet: true
+      when: rustfs_ftps_self_signed | bool
+
+    - name: FTPS | create the certificate directory
+      ansible.builtin.file:
+        path: "{{ rustfs_ftps_certs_dir }}"
+        state: directory
+        owner: "{{ rustfs_user }}"
+        group: "{{ rustfs_group }}"
+        mode: "0700"
+
+    - name: FTPS | build the self-signed SAN names
+      ansible.builtin.set_fact:
+        __rustfs_ftps_san_dns: >-
+          {{ ([rustfs_ftps_self_signed_common_name, inventory_hostname,
+               ansible_facts['hostname'] | default(''),
+               ansible_facts['fqdn'] | default(''), 'localhost']
+              + rustfs_ftps_self_signed_dns_sans)
+             | reject('equalto', '') | unique | list }}
+        __rustfs_ftps_san_ip: >-
+          {{ ([(ansible_facts['default_ipv4'] | default({})).get('address', ''), '127.0.0.1']
+              + rustfs_ftps_self_signed_ip_sans)
+             | reject('equalto', '') | unique | list }}
+      when: rustfs_ftps_self_signed | bool
+
+    - name: FTPS | build the self-signed subjectAltName list
+      ansible.builtin.set_fact:
+        __rustfs_ftps_san: >-
+          {{ (__rustfs_ftps_san_dns | map('regex_replace', '^', 'DNS:') | list)
+             + (__rustfs_ftps_san_ip | map('regex_replace', '^', 'IP:') | list) }}
+      when: rustfs_ftps_self_signed | bool
+
+    - name: FTPS | check the existing certificate material
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ rustfs_ftps_certs_dir }}/rustfs_cert.pem"
+        - "{{ rustfs_ftps_certs_dir }}/rustfs_key.pem"
+      register: __rustfs_ftps_existing
+
+    - name: FTPS | inspect the existing certificate
+      community.crypto.x509_certificate_info:
+        path: "{{ rustfs_ftps_certs_dir }}/rustfs_cert.pem"
+        valid_at:
+          renewal_window: "+{{ rustfs_ftps_self_signed_renew_days }}d"
+      register: __rustfs_ftps_cert_info
+      when:
+        - rustfs_ftps_self_signed | bool
+        - __rustfs_ftps_existing.results[0].stat.exists
+
+    - name: FTPS | decide whether the self-signed certificate needs renewal
+      ansible.builtin.set_fact:
+        __rustfs_ftps_renew: >-
+          {{ not ((__rustfs_ftps_cert_info.valid_at | default({}))
+                  .get('renewal_window', false)) }}
+      when: rustfs_ftps_self_signed | bool
+
+    - name: FTPS | generate the self-signed certificate material
+      # Check mode cannot write the certificate directory, so a fresh host is
+      # only inspected. This is the role's one documented check-mode exception.
+      when:
+        - rustfs_ftps_self_signed | bool
+        - not ansible_check_mode or __rustfs_ftps_existing.results[1].stat.exists
+      block:
+        - name: FTPS | ensure the self-signed private key exists
+          community.crypto.openssl_privatekey:
+            path: "{{ rustfs_ftps_certs_dir }}/rustfs_key.pem"
+            type: RSA
+            size: "{{ rustfs_ftps_self_signed_key_size }}"
+            owner: "{{ rustfs_user }}"
+            group: "{{ rustfs_group }}"
+            mode: "0600"
+            backup: true
+          notify: Restart the rustfs service
+
+        - name: FTPS | ensure the self-signed certificate request exists
+          community.crypto.openssl_csr:
+            path: "{{ rustfs_ftps_certs_dir }}/rustfs_csr.pem"
+            privatekey_path: "{{ rustfs_ftps_certs_dir }}/rustfs_key.pem"
+            common_name: "{{ rustfs_ftps_self_signed_common_name }}"
+            organization_name: RustFS
+            subject_alt_name: "{{ __rustfs_ftps_san }}"
+            key_usage:
+              - digitalSignature
+              - keyEncipherment
+            key_usage_critical: true
+            extended_key_usage:
+              - serverAuth
+            basic_constraints:
+              - "CA:FALSE"
+            basic_constraints_critical: true
+            owner: "{{ rustfs_user }}"
+            group: "{{ rustfs_group }}"
+            mode: "0600"
+            backup: true
+
+        - name: FTPS | ensure the self-signed certificate exists
+          community.crypto.x509_certificate:
+            path: "{{ rustfs_ftps_certs_dir }}/rustfs_cert.pem"
+            csr_path: "{{ rustfs_ftps_certs_dir }}/rustfs_csr.pem"
+            privatekey_path: "{{ rustfs_ftps_certs_dir }}/rustfs_key.pem"
+            provider: selfsigned
+            selfsigned_not_after: "+{{ rustfs_ftps_self_signed_days }}d"
+            selfsigned_digest: sha256
+            owner: "{{ rustfs_user }}"
+            group: "{{ rustfs_group }}"
+            mode: "0644"
+            backup: true
+            # Regenerate only when the current certificate expires inside the
+            # renewal window; timestamps are otherwise left alone so a re-run
+            # stays idempotent.
+            force: "{{ __rustfs_ftps_renew | bool }}"
+          notify: Restart the rustfs service
+
+    - name: FTPS | check the certificate material after generation
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ rustfs_ftps_certs_dir }}/rustfs_cert.pem"
+        - "{{ rustfs_ftps_certs_dir }}/rustfs_key.pem"
+      register: __rustfs_ftps_ready
+
+    - name: FTPS | require a certificate and a private key
+      ansible.builtin.assert:
+        that:
+          - __rustfs_ftps_ready.results[0].stat.exists
+          - __rustfs_ftps_ready.results[1].stat.exists
+        fail_msg: >-
+          FTPS is enabled but {{ rustfs_ftps_certs_dir }} does not contain both
+          rustfs_cert.pem and rustfs_key.pem. Provide CA-issued files there, or
+          set rustfs_ftps_self_signed: true for a test-only self-signed pair.
+        quiet: true
+      # In check mode a missing self-signed pair would not have been generated.
+      when: not ansible_check_mode or not (rustfs_ftps_self_signed | bool)
+
+    - name: FTPS | validate the certificate material
+      when:
+        - __rustfs_ftps_ready.results[0].stat.exists
+        - __rustfs_ftps_ready.results[1].stat.exists
+      block:
+        - name: FTPS | secure the private key
+          ansible.builtin.file:
+            path: "{{ rustfs_ftps_certs_dir }}/rustfs_key.pem"
+            state: file
+            owner: "{{ rustfs_user }}"
+            group: "{{ rustfs_group }}"
+            mode: "0600"
+
+        - name: FTPS | set the certificate permissions
+          ansible.builtin.file:
+            path: "{{ rustfs_ftps_certs_dir }}/rustfs_cert.pem"
+            state: file
+            owner: "{{ rustfs_user }}"
+            group: "{{ rustfs_group }}"
+            mode: "0644"
+
+        - name: FTPS | read the certificate
+          community.crypto.x509_certificate_info:
+            path: "{{ rustfs_ftps_certs_dir }}/rustfs_cert.pem"
+            valid_at:
+              now: "+0s"
+          register: __rustfs_ftps_cert_check
+
+        - name: FTPS | read the private key
+          community.crypto.openssl_privatekey_info:
+            path: "{{ rustfs_ftps_certs_dir }}/rustfs_key.pem"
+          register: __rustfs_ftps_key_check
+
+        - name: FTPS | verify the certificate is valid and matches the key
+          ansible.builtin.assert:
+            that:
+              - __rustfs_ftps_cert_check.valid_at.now | bool
+              - __rustfs_ftps_cert_check.public_key == __rustfs_ftps_key_check.public_key
+            fail_msg: >-
+              The FTPS material in {{ rustfs_ftps_certs_dir }} is invalid: the
+              certificate is expired, or rustfs_cert.pem does not match
+              rustfs_key.pem.
+            quiet: true

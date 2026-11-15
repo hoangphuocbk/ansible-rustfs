@@ -1,0 +1,7 @@
+---
+# Ansible / lint artefacts
+*.retry
+.cache/
+__pycache__/
+*.pyc
+.ansible/

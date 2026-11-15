@@ -1,24 +1,40 @@
 ---
 # tasks file for rustfs
 
+- name: Main | require a long enough secret key
+  ansible.builtin.assert:
+    that:
+      - rustfs_secret_key | length >= 8
+    fail_msg: >-
+      rustfs_secret_key must be at least 8 characters long (RustFS 1.0.2+).
+      Both credentials are required and have no defaults; supply them from
+      your secret store and keep them identical on every node.
+    quiet: true
+
 # Resolve once per host and promote to a fact so peer lookups can use
-# hostvars[item]['rustfs_bind_address'] without repeating the interface
+# hostvars[item]['__rustfs_bind_address'] without repeating the interface
 # expression. A non-empty rustfs_bind_address (play/host/extra var) wins.
-- name: main | resolve rustfs_bind_address
+# The fact is deliberately internal (double underscore) instead of reusing the
+# rustfs_bind_address input: set_fact must never shadow a role default.
+- name: Main | resolve the RustFS bind address
   ansible.builtin.set_fact:
-    rustfs_bind_address: >-
+    __rustfs_bind_address: >-
       {{ rustfs_bind_address | default('', true)
-         or hostvars[inventory_hostname]['ansible_' + rustfs_bind_interface]['ipv4']['address'] }}
+         or ansible_facts[rustfs_bind_interface]['ipv4']['address'] }}
   when: >-
     (rustfs_bind_address | default('', true) | length > 0) or
-    (('ansible_' ~ rustfs_bind_interface) in hostvars[inventory_hostname])
+    (rustfs_bind_interface in ansible_facts)
 
-- import_tasks: kernel-tuning.yaml
-  when: rustfs_tune_kernel
+- name: Main | apply kernel tuning
+  ansible.builtin.import_tasks: kernel-tuning.yml
+  when: rustfs_tune_kernel | bool
 
-- import_tasks: install.yaml
+- name: Main | install the RustFS binary and layout
+  ansible.builtin.import_tasks: install.yml
 
-- import_tasks: ftps.yaml
+- name: Main | prepare the FTP / FTPS gateway
+  ansible.builtin.import_tasks: ftps.yml
   when: rustfs_ftp_enable | bool or rustfs_ftps_enable | bool
 
-- import_tasks: configure.yaml
+- name: Main | configure the environment file and systemd unit
+  ansible.builtin.import_tasks: configure.yml

@@ -5,31 +5,35 @@
 # RustFS requires every node to (re)start at the same time, so the play runs
 # against all hosts at once (no `serial`) - handlers fire across the whole
 # cluster in the same run. Re-run with `--limit` only for additive scaling.
+#
+# Credentials are supplied from the environment (the role ships no defaults):
+#   export RUSTFS_ACCESS_KEY=... RUSTFS_SECRET_KEY=... RUSTFS_RPC_SECRET=...
+# or pass them from a vault: -e @vault.yml
 
-- hosts: rustfs-cluster
+- name: Deploy a RustFS cluster
+  hosts: rustfs_cluster
   gather_facts: true
-  remote_user: vagrant
   pre_tasks:
     - name: Check that the RustFS bind interface exists
       ansible.builtin.assert:
         that:
-          - ('ansible_' ~ rustfs_bind_interface) in hostvars[inventory_hostname]
+          - rustfs_bind_interface in ansible_facts
         fail_msg: >-
           rustfs_bind_interface '{{ rustfs_bind_interface }}' is not present on
           {{ inventory_hostname }}. Available interfaces:
-          {{ ansible_interfaces | default([]) | join(', ') }}.
+          {{ ansible_facts.interfaces | default([]) | join(', ') }}.
+        quiet: true
   tasks:
-    - name: Include rustfs role
-      include_role:
-        name: ../../ansible-rustfs/
+    - name: Include the rustfs role
+      ansible.builtin.include_role:
+        name: rustfs
   vars:
     # ---- binary -----------------------------------------------------------
     rustfs_version: 1.0.5
-    rustfs_download_url: "https://github.com/rustfs/rustfs/releases/download/{{ rustfs_version }}/rustfs-linux-x86_64-gnu-v{{ rustfs_version }}.zip"
-    rustfs_download_local_dir: /tmp
+    # rustfs_download_url is derived from rustfs_version + rustfs_artifact_name.
     # Online deploy. For air-gapped: set this to false and pre-stage the
-    # extracted binary at /tmp/rustfs on the control node.
-    enable_download_binary: true
+    # extracted binary in rustfs_download_local_dir on the control node.
+    rustfs_enable_download_binary: true
     rustfs_bin_path: /usr/local/bin/rustfs
 
     # ---- identity ---------------------------------------------------------
@@ -39,17 +43,18 @@
     # ---- listeners --------------------------------------------------------
     # Vagrant host-only NIC used for S3/console and cluster traffic.
     rustfs_bind_interface: eth1
-    rustfs_bind_address: "{{ hostvars[inventory_hostname]['ansible_' + rustfs_bind_interface]['ipv4']['address'] }}"
+    rustfs_bind_address: >-
+      {{ ansible_facts[rustfs_bind_interface]['ipv4']['address'] }}
     rustfs_address: "{{ rustfs_bind_address }}:{{ rustfs_api_port }}"
     rustfs_api_port: 9000
     rustfs_console_enable: true
     rustfs_console_address: "{{ rustfs_bind_address }}:{{ rustfs_console_port }}"
     rustfs_console_port: 9001
 
-    # ---- credentials (CHANGE ME) -----------------------------------------
-    rustfs_access_key: "rustfsadmin"
-    rustfs_secret_key: "ChangeMe-Str0ng-Secret"
-    rustfs_rpc_secret: "ChangeMe-Shared-Rpc-Secret"
+    # ---- credentials (from the environment / vault) ----------------------
+    rustfs_access_key: "{{ lookup('env', 'RUSTFS_ACCESS_KEY') }}"
+    rustfs_secret_key: "{{ lookup('env', 'RUSTFS_SECRET_KEY') }}"
+    rustfs_rpc_secret: "{{ lookup('env', 'RUSTFS_RPC_SECRET') }}"
 
     # ---- topology: 3 nodes x 4 disks -------------------------------------
     rustfs_volumes:
@@ -115,9 +120,11 @@
 
     # ---- firewall (Ubuntu uses ufw by default; off here) -----------------
     rustfs_configure_iptables: false
-    rustfs_cluster: rustfs-cluster
+    rustfs_cluster: rustfs_cluster
 
-    # extra RUSTFS_* variables
+    # ---- extra RUSTFS_* variables ----------------------------------------
+    # Lab-only: the test disks are not XFS-formatted, so the upstream disk
+    # check is bypassed. Never do this in production.
     rustfs_env_extra:
       - RUSTFS_UNSAFE_BYPASS_DISK_CHECK=true
       # - RUSTFS_COMPRESSION_ENABLED=true

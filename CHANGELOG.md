@@ -4,6 +4,51 @@ All notable changes to this role. Version numbers follow the upstream
 [RustFS releases](https://github.com/rustfs/rustfs/releases) tracked by
 `rustfs_version`; role-specific changes are called out explicitly.
 
+## Unreleased
+
+Role hardening and simplification. No upstream version bump.
+
+### Added
+
+- `meta/main.yml`, `meta/argument_specs.yml` (80 validated options) and
+  `requirements.yml` (ansible.posix, community.crypto).
+- `rustfs_artifact_name` so the release artifact can be swapped for arm64 or
+  musl builds without rewriting the download URL.
+- `rustfs_iptables_input_chain`, `rustfs_iptables_output_chain` and
+  `rustfs_iptables_comment` in place of the undeclared `iptable_*` variables.
+- `.ansible-lint` (production profile), `.yamllint`, `.pre-commit-config.yaml`,
+  `.github/workflows/ci.yml` and README sections for idempotency, check mode
+  and rollback.
+
+### Changed
+
+- **Breaking:** `rustfs_access_key` / `rustfs_secret_key` have no defaults and
+  must be supplied (from a vault, the environment, or `-e`). The role fails
+  fast instead of deploying the public `rustfsadmin` pair.
+- **Breaking:** `enable_download_binary` is now
+  `rustfs_enable_download_binary`.
+- `rustfs_download_local_dir` now defaults to `~/.cache/rustfs` (created with
+  mode `0700`) instead of `/tmp`.
+- `rustfs_env_extra` is now a list (it was documented as free-form text but
+  iterated as a list by the template).
+- Checksum verification delegates to `get_url` (a `sha256:<url>` checksum)
+  instead of parsing `SHA256SUMS` in Jinja.
+- Self-signed FTPS material is generated and inspected with
+  `community.crypto` instead of `openssl` command tasks. The certificate
+  directory now also holds `rustfs_csr.pem` when the pair is self-signed.
+- Internal variables use the `__rustfs_` prefix; the resolved bind address is
+  an internal fact instead of overriding the `rustfs_bind_address` default.
+- Task files use the `.yml` extension; the test inventory is a structured
+  directory with `group_vars/`.
+
+### Fixed
+
+- Check mode no longer fails when FTPS is enabled with a self-signed
+  certificate.
+- `template` tasks keep `backup: true`; credentials are quoted in the rendered
+  environment file.
+- Tasks report `changed` correctly for the self-signed certificate generation.
+
 ## 1.0.5 - 2026-11-12
 
 Upstream: [RustFS 1.0.5](https://github.com/rustfs/rustfs/releases/tag/1.0.5),

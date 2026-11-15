@@ -1,0 +1,26 @@
+---
+galaxy_info:
+  role_name: rustfs
+  namespace: rustfs
+  author: RustFS role maintainers
+  description: >-
+    Install and configure RustFS, a high performance S3-compatible distributed
+    object storage server, as a systemd service with optional FTP/FTPS.
+  license: Apache-2.0
+  min_ansible_version: "2.16"
+  platforms:
+    - name: Ubuntu
+      # The role targets 24.04 (noble), which this tooling's Galaxy schema does
+      # not know yet, so the platform is declared as "all".
+      versions:
+        - all
+  galaxy_tags:
+    - storage
+    - s3
+    - objectstorage
+    - rustfs
+    - systemd
+
+# Collection dependencies are declared in requirements.yml (galaxy roles can
+# only list role dependencies here).
+dependencies: []

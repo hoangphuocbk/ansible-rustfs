@@ -1,0 +1,13 @@
+---
+# CoP: run the strictest ansible-lint profile, not just the default.
+profile: production
+
+# Keep the lint run fast and deterministic.
+exclude_paths:
+  - .cache/
+  - .git/
+
+# Guard rails that matter for this role and are not covered by the profile.
+enable_list:
+  - no-same-owner
+  - yaml

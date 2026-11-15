@@ -1,0 +1,139 @@
+---
+# Install the RustFS binary and prepare the filesystem layout
+
+# --- required standard tools ----------------------------------------------
+# The software checklist requires bash, glibc and openssl to be present. On
+# Debian/Ubuntu glibc is provided by the `libc6` package (see defaults).
+- name: Install | ensure standard system tools are present
+  become: true
+  ansible.builtin.package:
+    name: "{{ rustfs_system_packages }}"
+    state: present
+  when: rustfs_install_packages | bool
+
+# --- service user / group (skipped when running as root) ------------------
+- name: Install | add the rustfs group
+  become: true
+  ansible.builtin.group:
+    name: "{{ rustfs_group }}"
+    state: present
+  when: rustfs_user != 'root'
+
+- name: Install | add the rustfs user
+  become: true
+  ansible.builtin.user:
+    name: "{{ rustfs_user }}"
+    group: "{{ rustfs_group }}"
+    state: present
+    shell: /bin/false
+    system: true
+    create_home: false
+    home: /
+  when: rustfs_user != 'root'
+
+# --- binary staging -------------------------------------------------------
+# Online: download the zip on the control node and extract the binary there.
+# Air-gapped: skip the tasks below (rustfs_enable_download_binary=false) and
+# make sure {{ rustfs_download_local_dir }}/rustfs is pre-staged on the
+# control node.
+- name: Install | create the control-node staging directory
+  become: false
+  ansible.builtin.file:
+    path: "{{ rustfs_download_local_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  run_once: true
+  when: rustfs_enable_download_binary | bool
+
+- name: Install | download the rustfs archive to the control node
+  become: false
+  ansible.builtin.get_url:
+    url: "{{ rustfs_download_url }}"
+    dest: "{{ rustfs_download_local_dir }}/{{ rustfs_artifact_name }}"
+    mode: "0600"
+    # get_url fetches the SHA256SUMS file itself and looks the archive up by
+    # its own file name, so no checksum parsing is done in this role.
+    checksum: >-
+      {{ ('sha256:' ~ rustfs_checksums_url)
+         if (rustfs_verify_checksum | bool and not ansible_check_mode) else omit }}
+    validate_certs: "{{ rustfs_download_validate_certs }}"
+  register: __rustfs_download_binary
+  until: __rustfs_download_binary is succeeded
+  retries: 5
+  delay: 2
+  delegate_to: localhost
+  run_once: true
+  when: rustfs_enable_download_binary | bool
+
+- name: Install | extract the rustfs binary on the control node
+  become: false
+  ansible.builtin.unarchive:
+    src: "{{ rustfs_download_local_dir }}/{{ rustfs_artifact_name }}"
+    dest: "{{ rustfs_download_local_dir }}"
+    remote_src: true
+    mode: "0700"
+  delegate_to: localhost
+  run_once: true
+  when: rustfs_enable_download_binary | bool
+
+- name: Install | check that a rustfs binary is staged on the control node
+  become: false
+  ansible.builtin.stat:
+    path: "{{ rustfs_download_local_dir }}/rustfs"
+  delegate_to: localhost
+  run_once: true
+  register: __rustfs_staged_binary
+
+- name: Install | require a staged rustfs binary
+  ansible.builtin.assert:
+    that:
+      - __rustfs_staged_binary.stat.exists
+    fail_msg: >-
+      {{ rustfs_download_local_dir }}/rustfs is missing on the control node.
+      Set rustfs_enable_download_binary=true to fetch it, or pre-stage the
+      extracted binary for an air-gapped deploy.
+    quiet: true
+  when: not ansible_check_mode
+
+- name: Install | copy the rustfs binary to the target host
+  become: true
+  ansible.builtin.copy:
+    src: "{{ rustfs_download_local_dir }}/rustfs"
+    dest: "{{ rustfs_bin_path }}"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart the rustfs service
+  # Check mode cannot diff a control-node file that is not staged yet.
+  when: not ansible_check_mode or __rustfs_staged_binary.stat.exists
+
+# --- directory layout -----------------------------------------------------
+- name: Install | create the rustfs working directory
+  become: true
+  ansible.builtin.file:
+    path: "{{ rustfs_working_directory }}"
+    state: directory
+    owner: "{{ rustfs_user }}"
+    group: "{{ rustfs_group }}"
+    mode: "0755"
+
+- name: Install | create the rustfs log directory
+  become: true
+  ansible.builtin.file:
+    path: "{{ rustfs_log_dir }}"
+    state: directory
+    owner: "{{ rustfs_user }}"
+    group: "{{ rustfs_group }}"
+    mode: "0750"
+
+- name: Install | create the rustfs data directories
+  become: true
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ rustfs_user }}"
+    group: "{{ rustfs_group }}"
+    mode: "0750"
+  loop: "{{ rustfs_datadirs }}"
+  when: rustfs_make_datadirs | bool

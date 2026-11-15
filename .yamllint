@@ -1,0 +1,16 @@
+---
+# CoP wraps at ~120 characters; yamllint's default of 80 is too tight for
+# descriptive role variables.
+extends: default
+
+rules:
+  line-length:
+    max: 120
+    level: error
+  comments:
+    min-spaces-from-content: 1
+  comments-indentation: false
+  document-start: disable
+  truthy:
+    allowed-values: ["true", "false"]
+    check-keys: false

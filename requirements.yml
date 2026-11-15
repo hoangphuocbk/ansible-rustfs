@@ -1,0 +1,8 @@
+---
+# Requirements for consuming this role.
+#   ansible-galaxy collection install -r requirements.yml
+collections:
+  - name: ansible.posix
+    version: ">=1.5.0"
+  - name: community.crypto
+    version: ">=2.0.0"

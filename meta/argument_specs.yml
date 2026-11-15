@@ -1,0 +1,410 @@
+---
+argument_specs:
+  main:
+    short_description: >-
+      Install and configure RustFS (S3-compatible distributed object storage)
+      on Ubuntu, managed by systemd.
+    description:
+      - Installs the RustFS binary (download with checksum verification, or a
+        pre-staged binary for air-gapped sites).
+      - Creates the service identity, working/log/data directories and the
+        optional FTP/FTPS gateway certificate material.
+      - Renders the environment file and the systemd unit, then enables and
+        starts the service.
+    author: RustFS role maintainers
+    options:
+      # --- installation / binary staging ---------------------------------
+      rustfs_version:
+        type: str
+        default: "1.0.5"
+        description: RustFS release used to build the download URL.
+      rustfs_download_url:
+        type: str
+        description: Binary archive URL used for online deploys.
+      rustfs_artifact_name:
+        type: str
+        description: >-
+          Release artifact file name (arch/ABI suffix), appended to the release
+          download URL.
+      rustfs_checksums_url:
+        type: str
+        description: Release SHA256SUMS URL used to verify the archive.
+      rustfs_verify_checksum:
+        type: bool
+        default: true
+        description: Verify the archive against the published SHA256SUMS.
+      rustfs_download_validate_certs:
+        type: bool
+        default: true
+        description: Verify TLS certificates on control-node downloads.
+      rustfs_download_local_dir:
+        type: str
+        description: Control-node staging directory (created with mode 0700).
+      rustfs_enable_download_binary:
+        type: bool
+        default: true
+        description: Fetch the binary from the internet; false for air-gapped.
+      rustfs_bin_path:
+        type: str
+        default: /usr/local/bin/rustfs
+        description: Install path of the binary on target hosts.
+      rustfs_install_packages:
+        type: bool
+        default: true
+        description: Install rustfs_system_packages.
+      rustfs_system_packages:
+        type: list
+        elements: str
+        default:
+          - bash
+          - ca-certificates
+          - libc6
+          - openssl
+        description: Standard tools required by the RustFS software checklist.
+
+      # --- service identity ----------------------------------------------
+      rustfs_user:
+        type: str
+        default: rustfs
+        description: Service account. Set to root to match the upstream unit.
+      rustfs_group:
+        type: str
+        default: rustfs
+        description: Service group.
+      rustfs_service_name:
+        type: str
+        default: rustfs
+        description: systemd unit and handler target name.
+      rustfs_working_directory:
+        type: str
+        default: /opt/rustfs
+        description: systemd WorkingDirectory (created by the role).
+
+      # --- listeners ------------------------------------------------------
+      rustfs_address:
+        type: str
+        default: ":9000"
+        description: S3 API listen address (host may be empty).
+      rustfs_api_port:
+        type: int
+        default: 9000
+        description: S3 API port, also used in the volume notation and firewall.
+      rustfs_console_enable:
+        type: bool
+        default: true
+        description: Enable the built-in web console.
+      rustfs_console_address:
+        type: str
+        default: ":9001"
+        description: Console listen address.
+      rustfs_console_port:
+        type: int
+        default: 9001
+        description: Console port, also opened in the firewall rules.
+      rustfs_console_prefix:
+        type: str
+        default: ""
+        description: Console URL path prefix when served behind a proxy.
+      rustfs_console_oidc_session_duration:
+        type: int
+        default: null
+        description: OIDC console session lifetime in seconds (1-604800).
+      rustfs_veeam_sosapi_enable:
+        type: bool
+        default: true
+        description: Answer SOSAPI virtual system object requests.
+      rustfs_cors_allowed_origins:
+        type: str
+        default: ""
+        description: Comma-separated CORS origins for the S3 API.
+      rustfs_console_cors_allowed_origins:
+        type: str
+        default: ""
+        description: Comma-separated CORS origins for the console.
+
+      # --- FTP / FTPS -----------------------------------------------------
+      rustfs_ftp_enable:
+        type: bool
+        default: false
+        description: Enable the plain FTP listener (cleartext; loopback only).
+      rustfs_ftp_address:
+        type: str
+        default: "127.0.0.1:8021"
+        description: Plain FTP listen address.
+      rustfs_ftp_passive_ports:
+        type: str
+        default: "40000-50000"
+        description: Inclusive passive-mode data port range.
+      rustfs_ftp_external_ip:
+        type: str
+        default: ""
+        description: Address advertised to passive clients behind NAT.
+      rustfs_ftps_enable:
+        type: bool
+        default: false
+        description: Enable the explicit FTPS (FTPES) listener.
+      rustfs_ftps_address:
+        type: str
+        default: "0.0.0.0:8022"
+        description: FTPS listen address.
+      rustfs_ftps_passive_ports:
+        type: str
+        default: "40000-50000"
+        description: Inclusive passive-mode data port range.
+      rustfs_ftps_external_ip:
+        type: str
+        default: ""
+        description: Address advertised to passive clients behind NAT.
+      rustfs_ftps_certs_dir:
+        type: str
+        default: /etc/rustfs/ftps-certs
+        description: Directory holding rustfs_cert.pem and rustfs_key.pem.
+      rustfs_ftps_self_signed:
+        type: bool
+        default: false
+        description: Generate a test-only self-signed certificate pair.
+      rustfs_ftps_self_signed_common_name:
+        type: str
+        default: "{{ inventory_hostname }}"
+        description: Subject CN of the generated certificate.
+      rustfs_ftps_self_signed_dns_sans:
+        type: list
+        elements: str
+        default: []
+        description: Additional DNS names for the generated certificate.
+      rustfs_ftps_self_signed_ip_sans:
+        type: list
+        elements: str
+        default: []
+        description: Additional IP addresses for the generated certificate.
+      rustfs_ftps_self_signed_key_size:
+        type: int
+        default: 4096
+        description: RSA key size (minimum 2048).
+      rustfs_ftps_self_signed_days:
+        type: int
+        default: 365
+        description: Validity period of the generated certificate.
+      rustfs_ftps_self_signed_renew_days:
+        type: int
+        default: 30
+        description: Regenerate when the certificate expires within this window.
+
+      # --- credentials ----------------------------------------------------
+      rustfs_access_key:
+        type: str
+        required: true
+        description: S3 root access key. No default on purpose.
+      rustfs_secret_key:
+        type: str
+        required: true
+        description: S3 root secret key (at least 8 bytes). No default on purpose.
+      rustfs_rpc_secret:
+        type: str
+        default: ""
+        description: Internode RPC secret; derived when empty.
+
+      # --- volumes / topology ---------------------------------------------
+      rustfs_volumes:
+        type: list
+        elements: str
+        description: Volume specs joined into RUSTFS_VOLUMES.
+      rustfs_make_datadirs:
+        type: bool
+        default: true
+        description: Create the directories listed in rustfs_datadirs.
+      rustfs_datadirs:
+        type: list
+        elements: str
+        description: Data directories present on every node.
+      rustfs_region:
+        type: str
+        default: ""
+        description: RUSTFS_REGION used for bucket location validation.
+      rustfs_internode_http_protocol:
+        type: str
+        default: auto
+        choices: [auto, http1]
+        description: Internode data-plane protocol.
+      rustfs_startup_peer_readmission_enable:
+        type: bool
+        default: true
+        description: Hold startup readiness until peers re-admit the node.
+      rustfs_startup_readiness_max_wait_seconds:
+        type: int
+        default: null
+        description: Upper bound in seconds for the peer re-admission gate.
+
+      # --- logging --------------------------------------------------------
+      rustfs_log_dir:
+        type: str
+        default: /var/log/rustfs
+        description: Directory for rotated rustfs-obs log files.
+      rustfs_log_level:
+        type: str
+        default: error
+        description: Log level for RUSTFS_OBS_LOGGER_LEVEL and RUST_LOG.
+      rustfs_log_max_total_size_bytes:
+        type: int
+        default: 2147483648
+        description: Total size cap for the log directory.
+      rustfs_log_max_single_file_size_bytes:
+        type: int
+        default: 0
+        description: Per-file size cap; 0 means unlimited.
+      rustfs_log_keep_files:
+        type: int
+        default: 30
+        description: Number of rolling files to keep.
+      rustfs_log_rotation_time:
+        type: str
+        default: hourly
+        choices: [minutely, hourly, daily]
+        description: Rotation granularity.
+      rustfs_log_compress_old_files:
+        type: bool
+        default: true
+        description: Compress rotated files before deleting them.
+      rustfs_log_compression_algorithm:
+        type: str
+        default: zstd
+        choices: [zstd, gzip]
+        description: Compression codec for rotated files.
+      rustfs_log_compressed_file_retention_days:
+        type: int
+        default: 30
+        description: Delete compressed archives older than this; 0 keeps forever.
+      rustfs_log_cleanup_interval_seconds:
+        type: int
+        default: 1800
+        description: How often the log cleaner runs.
+      rustfs_log_parallel_compress:
+        type: bool
+        default: true
+        description: Use parallel (work-stealing) compression.
+      rustfs_log_parallel_workers:
+        type: int
+        default: 6
+        description: Worker count for parallel compression.
+      rustfs_log_zstd_compression_level:
+        type: int
+        default: 8
+        description: zstd level, 1 (fastest) to 21 (best ratio).
+      rustfs_log_dry_run:
+        type: bool
+        default: false
+        description: Report log deletions without removing files.
+      rustfs_env_extra:
+        type: list
+        elements: str
+        default: []
+        description: Extra RUSTFS_* lines appended verbatim to the env file.
+      rustfs_envfile:
+        type: str
+        default: /etc/default/rustfs
+        description: Environment file rendered by the role.
+
+      # --- systemd resource limits ----------------------------------------
+      rustfs_limit_nofile:
+        type: int
+        default: 1048576
+        description: LimitNOFILE for the unit.
+      rustfs_limit_nproc:
+        type: int
+        default: 32768
+        description: LimitNPROC for the unit.
+      rustfs_restart_sec:
+        type: str
+        default: 10s
+        description: RestartSec for the unit.
+
+      # --- kernel tuning --------------------------------------------------
+      rustfs_tune_kernel:
+        type: bool
+        default: true
+        description: Persist rustfs_sysctl_settings.
+      rustfs_sysctl_file:
+        type: str
+        default: /etc/sysctl.d/90-rustfs.conf
+        description: sysctl drop-in written by ansible.posix.sysctl.
+      rustfs_sysctl_settings:
+        type: dict
+        description: Mapping of sysctl keys to values.
+
+      # --- io_uring -------------------------------------------------------
+      rustfs_enable_io_uring:
+        type: bool
+        default: true
+        description: Enable the opt-in io_uring read backend.
+      rustfs_io_uring_shards:
+        type: int
+        default: null
+        description: Per-disk io_uring shard count.
+      rustfs_io_uring_max_driver_threads:
+        type: int
+        default: null
+        description: Process-wide driver-thread budget (0 = unlimited).
+      rustfs_io_uring_read_budget_total_bytes:
+        type: int
+        default: null
+        description: Shared io_uring read budget in bytes.
+      rustfs_io_uring_read_budget_driver_bytes:
+        type: int
+        default: null
+        description: Per-driver share of the read budget in bytes.
+      rustfs_io_uring_read_result_budget_bytes:
+        type: int
+        default: null
+        description: Returned-result budget in bytes.
+      rustfs_io_uring_read_chunk_bytes:
+        type: int
+        default: null
+        description: Maximum logical size of one io_uring read (4 KiB-128 MiB).
+
+      # --- scanner tuning -------------------------------------------------
+      rustfs_scanner_walkers_per_disk:
+        type: int
+        default: null
+        description: Bucket walkers per local disk (1-16).
+      rustfs_scanner_disk_io_budget_iops:
+        description: Scanner IOPS ceiling per disk (auto, off, or a number).
+        default: null
+      rustfs_scanner_disk_io_budget_bytes_per_sec:
+        description: Scanner byte ceiling per disk (auto, off, or a number).
+        default: null
+      rustfs_scanner_recovery_backoff_cap_seconds:
+        type: int
+        default: null
+        description: Cap in seconds on the scanner recovery retry backoff.
+
+      # --- firewall -------------------------------------------------------
+      rustfs_configure_iptables:
+        type: bool
+        default: false
+        description: Open the API/console ports to the cluster peers.
+      rustfs_cluster:
+        type: str
+        default: rustfs_cluster
+        description: Inventory group whose hosts form the cluster.
+      rustfs_iptables_input_chain:
+        type: str
+        default: INPUT
+        description: Chain targeted by the inbound peer rules.
+      rustfs_iptables_output_chain:
+        type: str
+        default: OUTPUT
+        description: Chain targeted by the outbound peer rules.
+      rustfs_iptables_comment:
+        type: str
+        default: "ansible | RustFS cluster iptables rules"
+        description: Comment stamped on the managed iptables rules.
+      rustfs_bind_interface:
+        type: str
+        default: eth0
+        description: Interface that carries cluster traffic.
+      rustfs_bind_address:
+        type: str
+        default: ""
+        description: >-
+          Explicit bind address; when empty it is resolved from
+          rustfs_bind_interface via gathered facts.

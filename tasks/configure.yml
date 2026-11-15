@@ -1,0 +1,88 @@
+---
+# Configure the RustFS environment file, firewall and systemd service
+
+# --- firewall (optional) --------------------------------------------------
+- name: Configure | manage the cluster firewall
+  when: rustfs_configure_iptables | bool
+  block:
+    - name: Configure | require a resolved bind address for firewall rules
+      ansible.builtin.assert:
+        that:
+          - __rustfs_bind_address is defined
+          - __rustfs_bind_address | length > 0
+        fail_msg: >-
+          rustfs_configure_iptables is true but no bind address could be
+          resolved. Set rustfs_bind_interface to an existing interface and
+          gather facts, or set rustfs_bind_address explicitly.
+        quiet: true
+
+    - name: Configure | collect the peer bind addresses
+      ansible.builtin.set_fact:
+        __rustfs_peer_addresses: >-
+          {{ groups[rustfs_cluster]
+             | map('extract', hostvars)
+             | map(attribute='__rustfs_bind_address', default='')
+             | reject('in', ['', __rustfs_bind_address])
+             | list }}
+
+    - name: Configure | open RustFS ports to the cluster peers - INPUT
+      become: true
+      ansible.builtin.iptables:
+        action: insert
+        chain: "{{ rustfs_iptables_input_chain }}"
+        source: "{{ item }}"
+        protocol: tcp
+        destination_ports:
+          - "{{ rustfs_api_port }}"
+          - "{{ rustfs_console_port }}"
+        comment: "{{ rustfs_iptables_comment }}"
+        jump: ACCEPT
+      loop: "{{ __rustfs_peer_addresses }}"
+
+    - name: Configure | open RustFS ports to the cluster peers - OUTPUT
+      become: true
+      ansible.builtin.iptables:
+        action: insert
+        chain: "{{ rustfs_iptables_output_chain }}"
+        destination: "{{ item }}"
+        protocol: tcp
+        destination_ports:
+          - "{{ rustfs_api_port }}"
+          - "{{ rustfs_console_port }}"
+        comment: "{{ rustfs_iptables_comment }}"
+        jump: ACCEPT
+      loop: "{{ __rustfs_peer_addresses }}"
+
+# --- environment file -----------------------------------------------------
+# The role REPLACES this file wholesale; local edits are overwritten.
+- name: Configure | generate the RustFS environment file
+  become: true
+  ansible.builtin.template:
+    src: rustfs.env.j2
+    dest: "{{ rustfs_envfile }}"
+    owner: "{{ rustfs_user }}"
+    group: "{{ rustfs_group }}"
+    mode: "0640"
+    backup: true
+  notify: Restart the rustfs service
+
+# --- systemd service ------------------------------------------------------
+# The role REPLACES this unit file wholesale; local edits are overwritten.
+- name: Configure | install the rustfs systemd unit
+  become: true
+  ansible.builtin.template:
+    src: rustfs.service.j2
+    dest: "/etc/systemd/system/{{ rustfs_service_name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+    backup: true
+  notify: Restart the rustfs service
+
+- name: Configure | enable and start the rustfs service
+  become: true
+  ansible.builtin.systemd_service:
+    name: "{{ rustfs_service_name }}"
+    daemon_reload: true
+    enabled: true
+    state: started

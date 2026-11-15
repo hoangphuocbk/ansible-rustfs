@@ -23,11 +23,15 @@ Requirements
 - Ubuntu 24.04 LTS (the role targets 24.04; upstream supports Ubuntu 20.04+
   and RHEL 8/9). Linux 5.10 or later is recommended; the optional `io_uring`
   read backend requires it.
-- `ansible.posix` collection (for the `sysctl` module).
+- `ansible.posix` collection (for the `sysctl` module) and `community.crypto`
+  (for certificate generation and inspection) - install both with
+  `ansible-galaxy collection install -r requirements.yml`.
 - Standard tools `bash`, `glibc` (`libc6`) and `openssl` are installed by the
   role (see `rustfs_system_packages`); `ca-certificates` is included so the
   server can verify TLS peers against the system trust store (RustFS 1.0.4
-  refreshed certificate verification and trust roots).
+  refreshed certificate verification and trust roots). `openssl` is no longer
+  required on the control node - the self-signed FTPS pair is generated with
+  `community.crypto`.
 - Each node should have its data disks **formatted XFS and mounted in JBOD
   mode** at the paths listed in `rustfs_datadirs`. The role creates the
   directories but does **not** format or mount disks - see
@@ -127,6 +131,49 @@ Use one mount point and one `/etc/fstab` entry per disk, matching the paths in
 `rustfs_datadirs`. Keep labels/UUIDs and mount paths consistent across all
 nodes.
 
+Role behaviour
+--------------
+
+**Files managed by the role (replaced, not modified).** The role owns the
+following paths outright; any local edit is overwritten on the next run (the
+`template` tasks keep a `backup: true` copy):
+
+| Path | Owner / mode |
+|------|--------------|
+| `{{ rustfs_envfile }}` (`/etc/default/rustfs`) | `rustfs:rustfs`, `0640` |
+| `/etc/systemd/system/{{ rustfs_service_name }}.service` | `root:root`, `0644` |
+| `{{ rustfs_sysctl_file }}` (`/etc/sysctl.d/90-rustfs.conf`) | `root:root` |
+| `{{ rustfs_ftps_certs_dir }}` (`/etc/rustfs/ftps-certs`) | `rustfs:rustfs`, `0700` |
+| `{{ rustfs_log_dir }}`, `{{ rustfs_working_directory }}`, `{{ rustfs_datadirs }}` | `rustfs:rustfs` |
+
+**Idempotent: yes.** A second run against an unchanged host reports
+`changed=0`. Service restarts are driven by handlers, so the unit is only
+restarted when the binary, the unit file or the environment file changes.
+Note that RustFS requires the whole cluster to restart together, so a single
+node's change restarts every node in the run.
+
+**Check mode: supported.** `ansible-playbook --check` does not modify the
+hosts. Two documented exceptions:
+
+- On a host where the binary has not been staged yet, the binary copy is
+  skipped instead of diffed (the role asserts on a staged binary in normal
+  mode).
+- With `rustfs_ftps_self_signed: true`, generation is skipped while the private
+  key is absent (check mode cannot create the certificate directory), and the
+  certificate assertions are skipped for that one case.
+
+**Rollback.** The role has no automatic rollback. To undo a deployment:
+
+1. `systemctl disable --now {{ rustfs_service_name }}`.
+2. Remove `/etc/systemd/system/{{ rustfs_service_name }}.service`,
+   `{{ rustfs_envfile }}` and `{{ rustfs_sysctl_file }}`, then
+   `systemctl daemon-reload` and `sysctl --system`.
+3. Remove the data directories **only** after confirming that no node still
+   participates in the same storage pool - removing them on a live cluster
+   destroys the pool.
+4. To go back one version, re-run the role with the previous `rustfs_version`.
+   Rolling back across a format change is not supported by upstream.
+
 Role Variables
 --------------
 
@@ -135,11 +182,12 @@ See [defaults/main.yml](defaults/main.yml) for the full list. Key variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `rustfs_version` | `1.0.5` | Release used to build the download URL. |
+| `rustfs_artifact_name` | `rustfs-linux-x86_64-gnu-v<version>.zip` | Release artifact (swap for arm64/musl). |
 | `rustfs_download_url` | GitHub release zip | Binary archive URL (online deploys). |
 | `rustfs_verify_checksum` / `rustfs_checksums_url` | `true` / release `SHA256SUMS` | Verify the archive before unpacking. |
 | `rustfs_download_validate_certs` | `true` | Verify TLS on control-node downloads. |
-| `enable_download_binary` | `true` | `false` for air-gapped (pre-stage binary). |
-| `rustfs_download_local_dir` | `/tmp` | Control-node staging dir for the binary. |
+| `rustfs_enable_download_binary` | `true` | `false` for air-gapped (pre-stage binary). |
+| `rustfs_download_local_dir` | `~/.cache/rustfs` | Control-node staging dir (created with mode `0700`). |
 | `rustfs_bin_path` | `/usr/local/bin/rustfs` | Install path on targets. |
 | `rustfs_install_packages` | `true` | Install `rustfs_system_packages`. |
 | `rustfs_system_packages` | `bash`, `ca-certificates`, `libc6`, `openssl` | Standard tools. |
@@ -166,8 +214,8 @@ See [defaults/main.yml](defaults/main.yml) for the full list. Key variables:
 | `rustfs_ftps_self_signed` | `false` | Generate a test-only self-signed certificate. |
 | `rustfs_ftps_self_signed_*` | see defaults | CN, SANs, key size, validity and renewal window. |
 | `rustfs_ftps_passive_ports` / `rustfs_ftps_external_ip` | `40000-50000` / `""` | FTPS passive range and NAT-advertised address. |
-| `rustfs_access_key` / `rustfs_secret_key` | `rustfsadmin` | Root credentials - **change both** (see note below). |
-| `rustfs_rpc_secret` | `""` | Internode RPC secret; required if credentials stay default. |
+| `rustfs_access_key` / `rustfs_secret_key` | **required** | Root credentials - no default is shipped (see note below). |
+| `rustfs_rpc_secret` | `""` | Internode RPC secret; derived from the key pair when empty. |
 | `rustfs_volumes` | 4x4 expansion | `RUSTFS_VOLUMES`, identical on every node. |
 | `rustfs_datadirs` | `/data/rustfs0..3` | Data directories to create. |
 | `rustfs_log_dir` / `rustfs_log_level` | `/var/log/rustfs` / `error` | Logging. |
@@ -265,14 +313,15 @@ rustfs_ftps_passive_ports: "40000-40100"
 # Only when clients connect through NAT or a load balancer:
 # rustfs_ftps_external_ip: "storage.example.com"
 
-# Must contain rustfs_cert.pem and rustfs_key.pem.
+# Holds rustfs_cert.pem + rustfs_key.pem (CA-issued or generated). When
+# rustfs_ftps_self_signed is true the role also keeps the CSR here.
 rustfs_ftps_certs_dir: /etc/rustfs/ftps-certs
 rustfs_ftps_self_signed: false
 ```
 
 The role creates the directory with mode `0700`, sets the private key to `0600`
-and the certificate to `0644`, and verifies that both files parse, the
-certificate is not expired and the public keys match. Clients must use
+and the certificate to `0644`, and verifies that the certificate is not expired
+and that its public key matches the private key. Clients must use
 **explicit FTP over TLS** (FTPES); implicit FTPS is not supported. Certificate
 SANs must cover every hostname or IP address clients use.
 
@@ -335,8 +384,9 @@ Air-gapped deployment
    unzip rustfs-linux-x86_64-gnu-v1.0.5.zip   # produces ./rustfs
    ```
 2. Copy the extracted `rustfs` binary to the Ansible **control node** at
-   `{{ rustfs_download_local_dir }}/rustfs` (default `/tmp/rustfs`).
-3. Run the role with `enable_download_binary: false`. The role copies the
+   `{{ rustfs_download_local_dir }}/rustfs` (default `~/.cache/rustfs/rustfs`;
+   create the directory with mode `0700` if it does not exist).
+3. Run the role with `rustfs_enable_download_binary: false`. The role copies the
    pre-staged binary to every target host - no internet access required on
    the targets or control node. Checksum verification only applies to online
    downloads, so verify the archive manually as shown above.
@@ -344,14 +394,19 @@ Air-gapped deployment
 Example Playbook
 ----------------
 
+`rustfs_access_key` and `rustfs_secret_key` have **no defaults**; supply them
+from a vault or the environment. The role asserts on them before doing any
+work.
+
 ```yaml
-- hosts: rustfs-cluster
+- name: Deploy RustFS
+  hosts: rustfs_cluster
   roles:
-    - role: storage/rustfs
+    - role: rustfs
       vars:
-        rustfs_access_key: "rustfsadmin"
-        rustfs_secret_key: "a-long-random-secret"
-        rustfs_rpc_secret: "a-long-random-rpc-secret"
+        rustfs_access_key: "{{ vault_rustfs_access_key }}"
+        rustfs_secret_key: "{{ vault_rustfs_secret_key }}"
+        rustfs_rpc_secret: "{{ vault_rustfs_rpc_secret }}"
         rustfs_volumes:
           - "http://node{1...4}:9000/data/rustfs{0...3}"
         rustfs_datadirs:
@@ -386,6 +441,35 @@ A working multi-node example lives in [tests/install_rustfs.yml](tests/install_r
 - 1.0.4 refreshed certificate verification and the bundled trust roots. The
   Linux zip uses the system trust store, so the role now installs
   `ca-certificates` by default.
+
+Testing and CI
+--------------
+
+```bash
+# Lint (production profile) and YAML style
+ansible-lint
+yamllint .
+
+# Syntax check of the reference playbook
+ansible-playbook --syntax-check -i tests/inventory tests/install_rustfs.yml
+
+# Multi-node deployment (needs the Vagrant nodes and credentials in the env)
+export RUSTFS_ACCESS_KEY=... RUSTFS_SECRET_KEY=... RUSTFS_RPC_SECRET=...
+ansible-playbook -i tests/inventory tests/install_rustfs.yml
+```
+
+The same checks run in `.pre-commit-config.yaml` and in the GitHub Actions
+workflow (`.github/workflows/ci.yml`).
+
+The reference playbook lives in [`tests/install_rustfs.yml`](tests/install_rustfs.yml)
+and resolves the role through the `tests/roles/rustfs` symlink, so no Galaxy
+install is needed. Idempotency is verified by running the play twice and
+expecting `changed=0` on the second run.
+
+> **Molecule is intentionally not configured.** The role needs a multi-node
+> cluster, XFS-formatted data disks and a running systemd, none of which a
+> default Molecule container scenario provides. Testing is done against the
+> Vagrant cluster above; the lint/syntax layers run in CI.
 
 Troubleshooting
 ---------------

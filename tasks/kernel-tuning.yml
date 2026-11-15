@@ -1,7 +1,7 @@
 ---
 # OS kernel tuning for RustFS
 
-- name: kernel-tuning | apply sysctl performance settings
+- name: Kernel-tuning | apply the sysctl performance settings
   become: true
   ansible.posix.sysctl:
     name: "{{ item.key }}"

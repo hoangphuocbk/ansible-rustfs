@@ -1,9 +1,9 @@
 ---
 # handlers file for rustfs
 
-- name: restart rustfs service
+- name: Restart the rustfs service
   become: true
-  systemd:
+  ansible.builtin.systemd_service:
     name: "{{ rustfs_service_name }}"
     daemon_reload: true
     enabled: true
