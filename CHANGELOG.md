@@ -4,16 +4,23 @@ All notable changes to this role. Version numbers follow the upstream
 [RustFS releases](https://github.com/rustfs/rustfs/releases) tracked by
 `rustfs_version`; role-specific changes are called out explicitly.
 
-## Unreleased
+## 1.0.7 - 2026-11-26
 
-Role hardening and simplification. No upstream version bump.
+Upstream: [RustFS 1.0.7](https://github.com/rustfs/rustfs/releases/tag/1.0.7),
+which includes the [1.0.6](https://github.com/rustfs/rustfs/releases/tag/1.0.6)
+patch.
+
+Role hardening and simplification, plus the 1.0.7 version bump.
 
 ### Added
 
-- `meta/main.yml`, `meta/argument_specs.yml` (80 validated options) and
+- `meta/main.yml`, `meta/argument_specs.yml` (92 validated options) and
   `requirements.yml` (ansible.posix, community.crypto).
 - `rustfs_artifact_name` so the release artifact can be swapped for arm64 or
   musl builds without rewriting the download URL.
+- `rustfs_heal_replacement_mount_roots`
+  (`RUSTFS_HEAL_REPLACEMENT_MOUNT_ROOTS`, new in 1.0.7) for volume endpoints
+  that are subdirectories of an independent mount point.
 - `rustfs_iptables_input_chain`, `rustfs_iptables_output_chain` and
   `rustfs_iptables_comment` in place of the undeclared `iptable_*` variables.
 - `.ansible-lint` (production profile), `.yamllint`, `.pre-commit-config.yaml`,
@@ -22,6 +29,8 @@ Role hardening and simplification. No upstream version bump.
 
 ### Changed
 
+- `rustfs_version` and the test deployment now install **1.0.7** (gnu x86_64
+  zip) instead of 1.0.5. The 1.0.6 and 1.0.7 upstream fixes are included.
 - **Breaking:** `rustfs_access_key` / `rustfs_secret_key` have no defaults and
   must be supplied (from a vault, the environment, or `-e`). The role fails
   fast instead of deploying the public `rustfsadmin` pair.
@@ -48,6 +57,68 @@ Role hardening and simplification. No upstream version bump.
 - `template` tasks keep `backup: true`; credentials are quoted in the rendered
   environment file.
 - Tasks report `changed` correctly for the self-signed certificate generation.
+
+### Upstream 1.0.6 notable changes
+
+- **MRF responsibilities** - legacy MRF work stays queued after physical
+  repair, and MRF management is available on the release branch: cluster
+  summary, bounded responsibility pages, single-ID lookup, and explicit
+  refresh, recheck and risk-acceptance actions. Actions retain the durable
+  responsibility; they do not certify that data was verified.
+- **Scanner usage convergence** - obsolete scanner work is retired without
+  clearing responsibility for pending work.
+- **Build** - Rust 1.100 lint fixes and a larger macOS release runner
+  (release tooling only).
+
+### Upstream 1.0.7 notable changes
+
+- **Scanner durability** - durable per-bucket scan progress is exposed, and
+  wide or changing directory scans resume from checkpoints across restarts,
+  leader handoffs and owner cancellation. Directory walks are iterative
+  (avoiding deep recursion), and inventory/maintenance coverage, usage cache
+  invalidation, legacy usage recertification and tier registry replanning were
+  fixed.
+- **Per-bucket scanner quanta** - five opt-in controls
+  (`RUSTFS_SCANNER_BUCKET_QUANTUM_DURATION_SECS`, `..._OBJECTS`,
+  `..._DIRECTORIES`, `..._ENTRIES`, `..._NAME_BYTES`) bound one bucket's turn.
+  All default to `0` (disabled) and upstream has not selected production
+  limits, so the role leaves them to `rustfs_env_extra`.
+- **Heal, replacement and decommission** - replacement heal is backported,
+  busy bucket repairs retry after a node restart, delete recovery is bounded
+  and legacy residue cleanup is guarded, scanner progress stays with its
+  owning set during decommission, and ILM tier recovery continues past
+  unreadable objects.
+- **Delete recovery and S3** - batch delete correctness and bulk delete repair.
+  Blocked legacy delete transactions can be listed, inspected and
+  conditionally discarded with `rc admin heal delete-residue` or the Admin API
+  under `/rustfs/admin/v4/heal/delete-residue`. Preserve the evidence and
+  confirm the application owner's intent before discarding.
+- **Security, IAM and STS** - the STS subsystem validates root credentials at
+  startup and reports parent access denials; Console STS password rotation and
+  inline session policy `Id` support are backported. KMS and SSE fixes are
+  included.
+- **Observability** - the admin API reports inventory coverage and cluster
+  scanner activity alongside the new durable bucket scan progress.
+- **Drive replacement** - `RUSTFS_HEAL_REPLACEMENT_MOUNT_ROOTS` accepts data
+  endpoints below a mount point and disables the unsafe directory-backed heal
+  fallback on that node.
+
+### Upgrade notes
+
+- Run the play against the whole cluster and restart every node together;
+  RustFS forbids rolling restarts.
+- Complete the 1.0.7 upgrade on all nodes before any pool add/remove or
+  decommission retry.
+- Keep scanner checkpoints and published usage snapshots intact. A partial
+  sweep written by an older release (including 1.0.6) may resume as mixed
+  coverage and require a fresh certifying sweep; rolling back to an older
+  binary can also require recertification.
+- Before a downgrade, inspect affected buckets for blocked delete transactions
+  and settle or preserve the evidence. A version round trip alone cannot
+  establish the intended outcome of an interrupted delete.
+- The STS subsystem validates the configured root credentials at startup. The
+  role already requires a non-default pair, but it must be identical on every
+  node.
 
 ## 1.0.5 - 2026-11-12
 

@@ -15,7 +15,7 @@
 # bundles the CLI in the Linux artifacts - this role still uses the zip.
 # This role fetches the glibc (gnu) build; override with "-musl-" for musl.
 # Since 1.0.2 the gnu artifacts pin a glibc 2.31 ABI floor.
-rustfs_version: "1.0.5"
+rustfs_version: "1.0.7"
 # Release artifact to fetch. Swap the arch/ABI part for arm64 (`aarch64`) or
 # for a musl build (`-musl-`) without touching the URL layout.
 rustfs_artifact_name: "rustfs-linux-x86_64-gnu-v{{ rustfs_version }}.zip"
@@ -219,7 +219,7 @@ rustfs_region: ""
 # internode TLS is used, while the plaintext transport this role configures
 # stays on HTTP/1.1. `http1` forces HTTP/1.1 everywhere. Set the same value on
 # every node and restart the cluster together.
-# https://github.com/rustfs/rustfs/blob/1.0.5/docs/operations/internode-http-transport.md
+# https://github.com/rustfs/rustfs/blob/1.0.7/docs/operations/internode-http-transport.md
 rustfs_internode_http_protocol: "auto"
 
 # ----------------------------------------------------------------------------
@@ -234,6 +234,20 @@ rustfs_startup_peer_readmission_enable: true
 # Upper bound the gate waits for peers, in seconds (upstream default 120).
 # Only rendered when set. Keep it below the unit's TimeoutStartSec.
 rustfs_startup_readiness_max_wait_seconds: null
+
+# ----------------------------------------------------------------------------
+# Heal / drive replacement
+# ----------------------------------------------------------------------------
+# Colon-separated absolute mount roots for data directories that are
+# subdirectories of a mount point (RUSTFS_HEAL_REPLACEMENT_MOUNT_ROOTS, new in
+# 1.0.7). Set this on a node whose volume endpoints are paths below an
+# independent mount, for example "/srv/disk1:/srv/disk2" when the endpoints are
+# "/srv/disk1/rustfs" and "/srv/disk2/rustfs". Use canonical paths without
+# trailing slashes; the most specific matching root must be the active mount
+# and must not contain the system or sibling drives. Setting it disables the
+# unsafe directory-backed heal fallback on that node. Leave empty when every
+# endpoint is an independent mount.
+rustfs_heal_replacement_mount_roots: ""
 
 # ----------------------------------------------------------------------------
 # Logging

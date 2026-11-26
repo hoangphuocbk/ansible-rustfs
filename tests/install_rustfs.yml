@@ -29,7 +29,7 @@
         name: rustfs
   vars:
     # ---- binary -----------------------------------------------------------
-    rustfs_version: 1.0.5
+    rustfs_version: 1.0.7
     # rustfs_download_url is derived from rustfs_version + rustfs_artifact_name.
     # Online deploy. For air-gapped: set this to false and pre-stage the
     # extracted binary in rustfs_download_local_dir on the control node.
@@ -104,6 +104,11 @@
     # rustfs_scanner_disk_io_budget_iops: 200
     # rustfs_scanner_disk_io_budget_bytes_per_sec: 33554432
     # rustfs_scanner_recovery_backoff_cap_seconds: 600
+
+    # ---- 1.0.7 heal / drive replacement ---------------------------------
+    # Set when a volume endpoint is a subdirectory of an independent mount
+    # (canonical paths, no trailing slashes; disables the unsafe fallback):
+    # rustfs_heal_replacement_mount_roots: "/srv/disk1:/srv/disk2"
 
     # ---- FTP(S) ----------------------------------------------------------
     # Plain FTP is intentionally disabled: it sends credentials and data in

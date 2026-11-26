@@ -16,7 +16,7 @@ argument_specs:
       # --- installation / binary staging ---------------------------------
       rustfs_version:
         type: str
-        default: "1.0.5"
+        default: "1.0.7"
         description: RustFS release used to build the download URL.
       rustfs_download_url:
         type: str
@@ -234,6 +234,12 @@ argument_specs:
         type: int
         default: null
         description: Upper bound in seconds for the peer re-admission gate.
+      rustfs_heal_replacement_mount_roots:
+        type: str
+        default: ""
+        description: >-
+          Colon-separated absolute mount roots for endpoints below a mount
+          point (RUSTFS_HEAL_REPLACEMENT_MOUNT_ROOTS, 1.0.7).
 
       # --- logging --------------------------------------------------------
       rustfs_log_dir:

@@ -1,7 +1,7 @@
 RustFS Installation
 ===================
 
-Installs [RustFS](https://rustfs.com) 1.0.5 - a high-performance, S3-compatible,
+Installs [RustFS](https://rustfs.com) 1.0.7 - a high-performance, S3-compatible,
 distributed object storage server - on Ubuntu 24.04 virtual machines, managed
 by `systemd`. Supports **air-gapped** environments, applies OS kernel tuning,
 installs the required standard tools and enables the opt-in `io_uring` read
@@ -172,7 +172,10 @@ hosts. Two documented exceptions:
    participates in the same storage pool - removing them on a live cluster
    destroys the pool.
 4. To go back one version, re-run the role with the previous `rustfs_version`.
-   Rolling back across a format change is not supported by upstream.
+   Rolling back across a format change is not supported by upstream. Since
+   1.0.7 the scanner persists per-bucket progress and usage snapshots: keep
+   that state intact, and settle or preserve any pending delete transactions
+   before downgrading (see [Upgrading to 1.0.7](#upgrading-to-107)).
 
 Role Variables
 --------------
@@ -181,7 +184,7 @@ See [defaults/main.yml](defaults/main.yml) for the full list. Key variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `rustfs_version` | `1.0.5` | Release used to build the download URL. |
+| `rustfs_version` | `1.0.7` | Release used to build the download URL. |
 | `rustfs_artifact_name` | `rustfs-linux-x86_64-gnu-v<version>.zip` | Release artifact (swap for arm64/musl). |
 | `rustfs_download_url` | GitHub release zip | Binary archive URL (online deploys). |
 | `rustfs_verify_checksum` / `rustfs_checksums_url` | `true` / release `SHA256SUMS` | Verify the archive before unpacking. |
@@ -202,6 +205,7 @@ See [defaults/main.yml](defaults/main.yml) for the full list. Key variables:
 | `rustfs_veeam_sosapi_enable` | `true` | Veeam SOSAPI virtual system objects (1.0.5). |
 | `rustfs_startup_peer_readmission_enable` | `true` | Hold startup readiness until peers re-admit the node (1.0.5). |
 | `rustfs_startup_readiness_max_wait_seconds` | `null` | Peer re-admission budget (upstream default 120s). |
+| `rustfs_heal_replacement_mount_roots` | `""` | Colon-separated mount roots for data dirs below a mount (1.0.7). |
 | `rustfs_scanner_walkers_per_disk` | `null` | Scanner walkers per local disk (1-16). |
 | `rustfs_scanner_disk_io_budget_iops` / `..._bytes_per_sec` | `null` | Per-disk scanner I/O ceilings (`auto`/`off`/number). |
 | `rustfs_scanner_recovery_backoff_cap_seconds` | `null` | Cap on scanner recovery retry backoff. |
@@ -225,11 +229,11 @@ See [defaults/main.yml](defaults/main.yml) for the full list. Key variables:
 | `rustfs_bind_interface` / `rustfs_bind_address` | `eth0` / derived | Cluster NIC and its IPv4 address; override the address for a VIP. |
 | `rustfs_configure_iptables` | `false` | Open API/console ports to cluster peers. |
 
-Advanced 1.0.4/1.0.5 opt-ins that this role does not model directly - audit
+Advanced 1.0.4-1.0.7 opt-ins that this role does not model directly - audit
 denial rate limits, the notify/audit target queue byte budget, MRF lifecycle
-V2 and internode HTTP/2 over TLS ALPN - can be passed through
-`rustfs_env_extra`. See [CHANGELOG.md](CHANGELOG.md) for the details and
-preconditions.
+V2, internode HTTP/2 over TLS ALPN, and the 1.0.7 per-bucket scanner quanta -
+can be passed through `rustfs_env_extra`. See [CHANGELOG.md](CHANGELOG.md) for
+the details and preconditions.
 
 ### Kernel tuning applied
 
@@ -378,10 +382,10 @@ Air-gapped deployment
 
 1. On a machine with internet access, download, verify and extract the binary:
    ```
-   wget https://github.com/rustfs/rustfs/releases/download/1.0.5/rustfs-linux-x86_64-gnu-v1.0.5.zip
-   wget https://github.com/rustfs/rustfs/releases/download/1.0.5/SHA256SUMS
+   wget https://github.com/rustfs/rustfs/releases/download/1.0.7/rustfs-linux-x86_64-gnu-v1.0.7.zip
+   wget https://github.com/rustfs/rustfs/releases/download/1.0.7/SHA256SUMS
    sha256sum -c --ignore-missing SHA256SUMS
-   unzip rustfs-linux-x86_64-gnu-v1.0.5.zip   # produces ./rustfs
+   unzip rustfs-linux-x86_64-gnu-v1.0.7.zip   # produces ./rustfs
    ```
 2. Copy the extracted `rustfs` binary to the Ansible **control node** at
    `{{ rustfs_download_local_dir }}/rustfs` (default `~/.cache/rustfs/rustfs`;
@@ -423,24 +427,41 @@ A working multi-node example lives in [tests/install_rustfs.yml](tests/install_r
 > across every node in the same run. Use `--limit` only when *adding* a new
 > storage pool.
 
-### Upgrading to 1.0.5
+### Upgrading to 1.0.7
 
 - Complete the upgrade on **every** node before adding or removing pools, or
   before retrying a decommission operation.
 - The security checklist mentions rolling restarts, but RustFS distributed
   clusters require all nodes to restart together (see the note above); follow
   the release-specific upgrade notes.
-- While 1.0.4 and 1.0.5 nodes coexist, DELETE requests served by a 1.0.5 node
-  may temporarily return HTTP 503. Retry them once every node runs 1.0.5.
-- Startup readiness now waits for a strict majority of each erasure set's
-  peers to re-admit the node (fails open when peers are unreachable or still
-  on 1.0.4). The unit's `TimeoutStartSec` is raised to 300s to cover the
-  default 120s budget; keep `rustfs_startup_readiness_max_wait_seconds` below
-  that value, or disable the gate with
-  `rustfs_startup_peer_readmission_enable: false`.
-- 1.0.4 refreshed certificate verification and the bundled trust roots. The
-  Linux zip uses the system trust store, so the role now installs
-  `ca-certificates` by default.
+- 1.0.7 persists per-bucket scanner progress, usage snapshots and inventory
+  coverage across restarts and leader handoffs. Keep the scanner state intact.
+  A partial sweep written by an older release (including 1.0.6) may resume as
+  mixed coverage and require a fresh certifying sweep; returning to an older
+  binary can likewise require recertification. Do not delete scanner
+  checkpoints or published usage state to force a rebuild.
+- The STS subsystem validates the configured root credentials at startup and
+  reports parent-policy access denials. No role change is required, but the
+  same non-default pair must be present on every node.
+- 1.0.7 adds inspection and guarded discard for blocked legacy delete
+  transactions (`rc admin heal delete-residue`, Admin API
+  `/rustfs/admin/v4/heal/delete-residue`). Read the evidence and confirm the
+  application owner's intent before discarding anything. Before a downgrade,
+  check affected buckets for pending transactions and settle or preserve the
+  evidence; a version round trip cannot resolve them.
+- If auto-heal replaces drives whose volume endpoints are subdirectories of a
+  mount, set `rustfs_heal_replacement_mount_roots` to the canonical mount
+  paths on that node (colon-separated, no trailing slashes). This disables the
+  unsafe directory-backed heal fallback.
+- **Coming from 1.0.5 or earlier:** finish the upgrade on every node before
+  adding or removing pools, or retrying a decommission. Retry DELETE requests
+  that return HTTP 503 while old and new nodes coexist; the mixed-version
+  behavior is resolved once every node runs 1.0.7. Startup readiness also
+  waits for a strict majority of each erasure set's peers to re-admit the node
+  (fails open when peers are unreachable or still old). The unit's
+  `TimeoutStartSec` is 300s to cover the default 120s budget; keep
+  `rustfs_startup_readiness_max_wait_seconds` below that value, or disable the
+  gate with `rustfs_startup_peer_readmission_enable: false`.
 
 Testing and CI
 --------------
